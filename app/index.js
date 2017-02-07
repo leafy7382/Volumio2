@@ -1261,15 +1261,29 @@ CoreCommandRouter.prototype.volumioRandom = function (data) {
 	return this.stateMachine.setRandom(data);
 };
 
-CoreCommandRouter.prototype.volumioRepeat = function (data) {
+CoreCommandRouter.prototype.volumioRepeat = function (repeat,repeatSingle) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioRandom');
-	return this.stateMachine.setRepeat(data);
+	return this.stateMachine.setRepeat(repeat,repeatSingle);
 };
 
 CoreCommandRouter.prototype.volumioConsume = function (data) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioConsume');
 	return this.stateMachine.setConsume(data);
 };
+
+/**
+ * This method implements Fast Forward and Rewind, depending on the sign of method parameter.
+ * Return a promise
+ */
+CoreCommandRouter.prototype.volumioFFWDRew = function (millisecs) {
+    this.pushConsoleMessage('CoreCommandRouter::volumioFFWDRew '+millisecs);
+
+    return this.stateMachine.ffwdRew(millisecs);
+};
+
+
+
+
 
 CoreCommandRouter.prototype.volumioSaveQueueToPlaylist = function (name) {
 	var self=this;
