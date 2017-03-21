@@ -158,12 +158,13 @@ ControllerNetworkfs.prototype.mountShare = function (data) {
 		var trial = 0;
 	}
 
-	var fstype = config.get('NasMounts.' + shareid + '.fstype');
-	var options = config.get('NasMounts.' + shareid + '.options');
-	var pathraw = config.get('NasMounts.' + shareid + '.path');
-	var mountidraw = config.get('NasMounts.' + shareid + '.name');
+	var key = 'NasMounts.' + shareid;
+	var fstype = config.get(key + '.fstype');
+	var options = config.get(key + '.options');
+	var path = config.get(key + '.path');
+	var mountidraw = config.get(key + '.name');
 	// Check we have sane data - operating on undefined values will crash us
-	if (fstype === 'undefined' || pathraw === 'undefined') {
+	if (fstype === 'undefined' || path === 'undefined') {
 		console.log('Unable to retrieve config for share '  + shareid + ', returning early');
 		return defer.promise;
 	}
@@ -171,17 +172,16 @@ ControllerNetworkfs.prototype.mountShare = function (data) {
 	var fsopts;
 	var credentials;
 	var responsemessage = {status:""};
-	var path = pathraw.replace(/ /g,"\\ ");
 	// The local mountpoint path must not contain these characters, because
 	// they get specially encoded in /etc/mtab and cause mount/umount failures.
 	// See getmntent(7).
 	var mountid = mountidraw.replace(/[\s\n\\]/g,"_");
 
 	if (fstype == "cifs") {
-		pointer = '//' + config.get('NasMounts.' + shareid + '.ip') + '/' + path.replace(' ', '\ ');;
+		pointer = '//' + config.get('NasMounts.' + shareid + '.ip') + '/' + path;
 		//Password-protected mount
-		if (config.get('NasMounts.' + shareid + '.user') !== 'undefined' && config.get('NasMounts.' + shareid + '.user') !== '') {
-			credentials = 'username=' + config.get('NasMounts.' + shareid + '.user') + ',' + 'password=' + config.get('NasMounts.' + shareid + '.password') + ",";
+		if (config.get(key + '.user') !== 'undefined' && config.get(key + '.user') !== '') {
+			credentials = 'username=' + config.get(key + '.user') + ',' + 'password=' + config.get(key + '.password') + ",";
 		} else {
 			credentials = 'guest,';
 		}
@@ -192,7 +192,7 @@ ControllerNetworkfs.prototype.mountShare = function (data) {
 		}
 
 	} else { // nfs
-		pointer = config.get('NasMounts.' + shareid + '.ip') + ':' + path.replace(' ', '\ ');;
+		pointer = config.get('NasMounts.' + shareid + '.ip') + ':' + path;
 		if (options) {
 			fsopts ="ro,soft,noauto,"+options;
 		} else {
@@ -209,20 +209,21 @@ ControllerNetworkfs.prototype.mountShare = function (data) {
 				result.error = 'Permission denied';
 			} else {
 				var splitreason = result.error.split('mount error');
-				result.error = splitreason[1]
+				// if the split does not match, splitreason[1] is undefined
+				if (splitreason.length > 1) result.error = splitreason[1];
 			}
 			responsemessage = {status:"fail", reason:result.error}
 			defer.resolve(responsemessage);
 			if (data.init) {
-			if (trial < 4) {
-				trial++
-				self.logger.info("Cannot mount NAS "+mountid+" at system boot, trial number "+trial+" ,retrying in 5 seconds");
-				setTimeout(function () {
-				self.mountShare({init:true, key:data.key, trial:trial});
-				}, 5000);
-			} else {
-				self.logger.info("Cannot mount NAS at system boot, trial number "+trial+" ,stopping");
-			}
+				if (trial < 4) {
+					trial++
+					self.logger.info("Cannot mount NAS "+mountid+" at system boot, trial number "+trial+" ,retrying in 5 seconds");
+					setTimeout(function () {
+						self.mountShare({init:true, key:data.key, trial:trial});
+					}, 5000);
+				} else {
+					self.logger.info("Cannot mount NAS at system boot, trial number "+trial+" ,stopping");
+				}
 			}
 		} else {
 			responsemessage = {status:"success"}
@@ -361,10 +362,9 @@ ControllerNetworkfs.prototype.addShare = function (data) {
 	}
 
 	uuid = libUUID.v4();
-	var key = "NasMounts." + uuid + ".";
 	self.logger.info("No correspondence found in configuration for share " + name + " on IP " + ip);
 
-	var saveshare = self.saveShareConf(key, uuid, name, ip, path, fstype, username, password, options);
+	var saveshare = self.saveShareConf('NasMounts', uuid, name, ip, path, fstype, username, password, options);
 
 	saveshare.then(function () {
 		var mountshare = self.mountShare({key:uuid});
@@ -403,17 +403,18 @@ ControllerNetworkfs.prototype.addShare = function (data) {
 	return defer.promise;
 };
 
-ControllerNetworkfs.prototype.saveShareConf = function (key, uuid, name, ip, path, fstype, username, password, options) {
+ControllerNetworkfs.prototype.saveShareConf = function (parent, uuid, name, ip, path, fstype, username, password, options) {
 	var self = this;
 
 	var defer = libQ.defer();
-	config.addConfigValue(key + 'name', 'string', name);
-	config.addConfigValue(key + 'ip', 'string', ip);
-	config.addConfigValue(key + 'path', 'string', path);
-	config.addConfigValue(key + 'fstype', 'string', fstype);
-	config.addConfigValue(key + 'user', 'string', username);
-	config.addConfigValue(key + 'password', 'string', password);
-	config.addConfigValue(key + 'options', 'string', options);
+	var key = parent + '.' + uuid;
+	config.addConfigValue(key + '.name', 'string', name);
+	config.addConfigValue(key + '.ip', 'string', ip);
+	config.addConfigValue(key + '.path', 'string', path);
+	config.addConfigValue(key + '.fstype', 'string', fstype);
+	config.addConfigValue(key + '.user', 'string', username);
+	config.addConfigValue(key + '.password', 'string', password);
+	config.addConfigValue(key + '.options', 'string', options);
 
 	defer.resolve('ok')
 	return defer.promise;
@@ -511,26 +512,27 @@ ControllerNetworkfs.prototype.listShares = function (data) {
 
 ControllerNetworkfs.prototype.getMountSize = function (share) {
 	return new Promise(function (resolve, reject) {
-		var key = 'NasMounts.' + share + '.';
-		var name = config.get(key + 'name');
+		var key = 'NasMounts.' + share;
+		var name = config.get(key + '.name');
 		var mountidraw = name;
 		var mountid    = mountidraw.replace(/[\s\n\\]/g,"_");
 		var mountpoint = '/mnt/NAS/' + mountid;
 		var mounted = mountutil.isMounted(mountpoint, false);
 		var respShare = {
-			path: config.get(key + 'path'),
-			ip: config.get(key + 'ip'),
+			path: config.get(key + '.path'),
+			ip: config.get(key + '.ip'),
+			name: config.get(key + '.name'),
+			fstype: config.get(key + '.fstype'),
+			username: config.get(key + '.user'),
+			password: config.get(key + '.password'),
+			options: config.get(key + '.options'),
 			id: share,
-			name: name,
-			fstype: config.get(key + 'fstype'),
-			username: config.get(key + 'user'),
-			password: config.get(key + 'password'),
-			options: config.get(key + 'options'),
 			mounted: mounted.mounted,
 			size: ''
 		};
+		var quotedmount = quotePath(mountpoint);
 		// cmd returns size in bytes with no units and no header line
-		var cmd="df -B1 --output=used '"+mountpoint+"' | tail -1";
+		var cmd="df -B1 --output=used " + quotedmount + " | tail -1";
 		var promise = libQ.ncall(exec,respShare,cmd).then(function (stdout){
 
 
@@ -557,6 +559,20 @@ ControllerNetworkfs.prototype.getMountSize = function (share) {
 	});
 };
 
+// Properly single-quote a path that will be handed to a shell exec.
+var quotePath = function (path) {
+	var self = this;
+	var output = '';
+
+	var pieces = path.split("'");
+	var n = pieces.length;
+	for (var i=0; i<n; i++) {
+		output = output + "'" + pieces[i] + "'";
+		if (i< (n-1)) output = output + "\\'";
+	}
+	return output;
+}
+
 /**
  * {
  name:’SHARE su 192.168.10.135’
@@ -578,16 +594,16 @@ ControllerNetworkfs.prototype.infoShare = function (data) {
 	var defer = libQ.defer();
 
 	if (config.has('NasMounts.' + data['id'])) {
-		var key = 'NasMounts.' + data['id'] + '.';
+		var key = 'NasMounts.' + data['id'];
 		var response = {
-			path: config.get(key + 'path'),
-			name: config.get(key + 'name'),
-			id: data['id'],
-			ip: config.get(key + 'ip'),
-			fstype: config.get(key + 'fstype'),
-			username: config.get(key + 'user'),
-			password: config.get(key + 'password'),
-			options: config.get(key + 'options')
+			path: config.get(key + '.path'),
+			name: config.get(key + '.name'),
+			ip: config.get(key + '.ip'),
+			fstype: config.get(key + '.fstype'),
+			username: config.get(key + '.user'),
+			password: config.get(key + '.password'),
+			options: config.get(key + '.options'),
+			id: data['id']
 		};
 
 		defer.resolve(response);
@@ -630,9 +646,10 @@ ControllerNetworkfs.prototype.editShare = function (data) {
 		var password= data['password'];
 	}
 
-	if (config.has('NasMounts.' + data['id'])) {
+	var key = 'NasMounts.' + data['id'];
+	if (config.has(key)) {
 
-		var mountidraw = config.get('NasMounts.' + data['id'] + '.name');
+		var mountidraw = config.get(key + '.name');
 		var mountid    = mountidraw.replace(/[\s\n\\]/g,"_");
 		var mountpoint = '/mnt/NAS/' + mountid;
 		mountutil.umount(mountpoint, false, {"removeDir": true}, function (result) {
@@ -643,37 +660,36 @@ ControllerNetworkfs.prototype.editShare = function (data) {
 				});
 			} else {
 				self.logger.info("Share " + mountidraw + " successfully unmounted");
-				var key = 'NasMounts.' + data['id'] + '.';
 
-				var oldpath = config.get(key + 'path');
-				var oldname = config.get(key + 'name');
-				var oldip = config.get(key + 'ip');
-				var oldfstype = config.get(key + 'fstype');
-				var oldusername = config.get(key + 'user');
-				var oldpassword = config.get(key + 'password');
-				var oldoptions = config.get(key + 'options');
+				var oldpath = config.get(key + '.path');
+				var oldname = config.get(key + '.name');
+				var oldip = config.get(key + '.ip');
+				var oldfstype = config.get(key + '.fstype');
+				var oldusername = config.get(key + '.user');
+				var oldpassword = config.get(key + '.password');
+				var oldoptions = config.get(key + '.options');
 
 
 				if (data['name']) {
-				config.set(key + 'name', data['name']);
+				config.set(key + '.name', data['name']);
 				}
 				if(data['path']){
-				config.set(key + 'path', data['path']);
+				config.set(key + '.path', data['path']);
 				}
 				if(data['ip']) {
-					config.set(key + 'ip', data['ip']);
+					config.set(key + '.ip', data['ip']);
 				}
 				if (data['fstype']) {
-				config.set(key + 'fstype', data['fstype']);
+				config.set(key + '.fstype', data['fstype']);
 				}
 				if (data['username']) {
-					config.set(key + 'user', data['username']);
+					config.set(key + '.user', data['username']);
 				}
 				if (data['password']) {
-					config.set(key + 'password', data['password']);
+					config.set(key + '.password', data['password']);
 				}
 				if (data['options']) {
-					config.set(key + 'options', data['options']);
+					config.set(key + '.options', data['options']);
 				}
 
 
@@ -691,13 +707,13 @@ ControllerNetworkfs.prototype.editShare = function (data) {
 							if(data.reason) {
 
 								self.logger.info("An error occurred mounting the new share. Rolling back configuration");
-								config.set(key + 'name', oldname);
-								config.set(key + 'path', oldpath);
-								config.set(key + 'ip', oldip);
-								config.set(key + 'fstype', oldfstype);
-								config.set(key + 'user', oldusername);
-								config.set(key + 'password', oldpassword);
-								config.set(key + 'options', oldoptions);
+								config.set(key + '.name', oldname);
+								config.set(key + '.path', oldpath);
+								config.set(key + '.ip', oldip);
+								config.set(key + '.fstype', oldfstype);
+								config.set(key + '.user', oldusername);
+								config.set(key + '.password', oldpassword);
+								config.set(key + '.options', oldoptions);
 								if (data.reason === 'Permission denied') {
 									responsemessageedit = {emit: 'nasCredentialsCheck', data:{ 'id': id, 'name': name, 'username': username, 'password':password }};
 									defer.resolve(responsemessageedit);

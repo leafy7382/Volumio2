@@ -19,8 +19,28 @@ function CoreStateMachine(commandRouter) {
     this.volatileService="";
     this.volatileState={};
 	this.isVolatile = false;
+    /**
+     * This field tells the system if it is currenty running in consume mode
+     * @type {boolean} true or false wether the system is in consume mode
+     */
+	this.isConsume=false;
 
-	this.logger=this.commandRouter.logger;
+    /**
+     * This variable contains the consume state to return when getState is being invoked
+     * @type {{}} JSON containing the state
+     */
+	this.consumeState={};
+
+    /**
+     * This variable contains the service to handle when in consume mode
+     */
+	this.consumeUpdateService;
+
+	/**
+	*This field tells the system if it is currenty running in consume mode, but no metadata should be retrieved
+	* @type {boolean} true or false
+	*/
+	this.consumeIgnoreMetadata = false;
 
 	this.playQueue = new (require('./playqueue.js'))(commandRouter, this);
 	this.resetVolumioState();
@@ -29,7 +49,7 @@ function CoreStateMachine(commandRouter) {
 // Public Methods ---------------------------------------------------------------------------------------
 // Get the current state of the player
 CoreStateMachine.prototype.getState = function () {
-	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::getState');
+    this.commandRouter.pushDebugConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::getState');
 
     if(this.isVolatile)
     {
@@ -68,34 +88,48 @@ CoreStateMachine.prototype.getState = function () {
             service: this.volatileState.service
         };
     }
+    else if(this.isConsume)
+    {
+        if(this.consumeState)
+        {
+            // checking consumeState or the below code will throw an exception
+            return {
+                status: this.consumeState.status,
+                title: this.consumeState.title,
+                artist: this.consumeState.artist,
+                album: this.consumeState.album,
+                albumart: this.consumeState.albumart,
+                uri: this.consumeState.uri,
+                trackType: this.consumeState.trackType,
+                seek: this.consumeState.seek,
+                duration: this.consumeState.duration,
+                samplerate: this.consumeState.samplerate,
+                bitdepth: this.consumeState.bitdepth,
+                channels: this.consumeState.channels,
+                random: false,
+                repeat: false,
+                repeatSingle:false,
+                consume: false,
+                volume: this.currentVolume,
+                mute: this.currentMute,
+                stream: this.consumeState.stream,
+                updatedb: false,
+                volatile: true,
+                trackType: this.consumeState.trackType,
+                service: this.consumeState.service
+            };
+        }
+        else
+        {
+            return this.getEmptyState();
+        }
+    }
     else
     {
         var trackBlock = this.getTrack(this.currentPosition);
         if(trackBlock===undefined )
         {
-            return {
-                status: 'stop',
-                position: 0,
-                title: '',
-                artist: '',
-                album: '',
-                albumart: '/albumart',
-                duration:0,
-                uri: '',
-                seek: 0,
-                samplerate: '',
-                channels: '',
-                bitdepth: '',
-                Streaming: false,
-                service: 'mpd',
-                volume: this.currentVolume,
-                mute: this.currentMute,
-                random:this.currentRandom,
-                repeat: this.currentRepeat,
-                repeatSingle: this.currentRepeatSingleSong,
-                updatedb: this.currentUpdate,
-                consume: this.currentConsume
-            };
+            return this.getEmptyState();
         }
         else {
             if (trackBlock.service === 'webradio') {
@@ -133,6 +167,40 @@ CoreStateMachine.prototype.getState = function () {
 
 
 };
+
+/**
+ * This method returns an empty state. It is used when the state cannot be built from current information
+ * @returns the status
+ */
+CoreStateMachine.prototype.getEmptyState = function () {
+    return {
+        status: 'stop',
+        position: 0,
+        title: '',
+        artist: '',
+        album: '',
+        albumart: '/albumart',
+        duration:0,
+        uri: '',
+        seek: 0,
+        samplerate: '',
+        channels: '',
+        bitdepth: '',
+        Streaming: false,
+        service: 'mpd',
+        volume: this.currentVolume,
+        mute: this.currentMute,
+        random:this.currentRandom,
+        repeat: this.currentRepeat,
+        repeatSingle: this.currentRepeatSingleSong,
+        updatedb: this.currentUpdate,
+        consume: this.currentConsume
+    };
+}
+
+
+
+
 
 // Get the current contents of the play queue
 CoreStateMachine.prototype.getQueue = function () {
@@ -300,6 +368,40 @@ CoreStateMachine.prototype.stopPlaybackTimer = function () {
 	return libQ.resolve();
 };
 
+
+
+CoreStateMachine.prototype.getNextIndex = function () {
+    var nextIndex=this.currentPosition+1;
+
+    var isLastTrack=(this.playQueue.arrayQueue.length-1)==this.currentPosition;
+
+    // Check if Repeat mode is on and last track is played, note that Random and Consume overides Repeat
+    if(this.currentRepeat)
+    {
+        if(this.currentRepeatSingleSong) {
+            nextIndex=this.currentPosition;
+        } else if (isLastTrack) {
+            nextIndex=0;
+        }
+
+    }
+
+    if(isLastTrack && this.currentConsume)
+    {
+        nextIndex=0;
+    }
+
+    // Then check if Random mode is on - Random mode overrides Repeat mode by this
+    if(this.currentRandom)
+    {
+        nextIndex=Math.floor(Math.random() * (this.playQueue.arrayQueue.length ));
+        this.nextRandomIndex=nextIndex;
+    }
+
+    return nextIndex;
+};
+
+
 // Stop playback timer
 CoreStateMachine.prototype.increasePlaybackTimer = function () {
 	var self=this;
@@ -313,41 +415,21 @@ CoreStateMachine.prototype.increasePlaybackTimer = function () {
 
 
 		var remainingTime=this.currentSongDuration-this.currentSeek;
-		var isLastTrack=(this.playQueue.arrayQueue.length-1)==this.currentPosition;
 		if(remainingTime<5000 && this.askedForPrefetch==false)
 		{
 			this.askedForPrefetch=true;
 
 			var trackBlock = this.getTrack(this.currentPosition);
 
-            var nextIndex=this.currentPosition+1;
-            // Check if Repeat mode is on and last track is played, note that Random and Consume overides Repeat
-            if(this.currentRepeat)
-            {
-                if(this.currentRepeatSingleSong)
-                    nextIndex=this.currentPosition;
-                else nextIndex=0;
-            }
-
-            if(isLastTrack && this.currentConsume)
-            {
-                nextIndex=0;
-            }
-
-            // Then check if Random mode is on - Random mode overrides Repeat mode by this
-            if(this.currentRandom)
-            {
-                nextIndex=Math.floor(Math.random() * (this.playQueue.arrayQueue.length ));
-                this.nextRandomIndex=nextIndex;
-            }
+            var nextIndex=this.getNextIndex();
 
             var nextTrackBlock = this.getTrack(nextIndex);
 			if(nextTrackBlock!==undefined && nextTrackBlock!==null && nextTrackBlock.service==trackBlock.service)
 			{
-				this.logger.info("Prefetching next song");
+                this.commandRouter.pushConsoleMessage("Prefetching next song");
 
 				var plugin = this.commandRouter.pluginManager.getPlugin('music_service', trackBlock.service);
-				if(plugin.prefetch!==undefined)
+				if(typeof(plugin.prefetch) === typeof(Function))
 				{
 					this.prefetchDone=true;
 					plugin.prefetch(nextTrackBlock);
@@ -361,34 +443,17 @@ CoreStateMachine.prototype.increasePlaybackTimer = function () {
 			this.simulateStopStartDone=true;
 			this.currentSeek=0;
 
-            if(this.currentConsume)
+
+			if(this.currentRandom)
             {
-                this.playQueue.removeQueueItem({value:this.currentPosition});
+                this.currentPosition=this.nextRandomIndex;
             }
             else
             {
-                if(this.currentRandom)
-                {
-                    this.currentPosition=this.nextRandomIndex;
-                }
-                else if(this.currentRepeat)
-                {
-                    if(!this.currentRepeatSingleSong)
-                    {
-                        this.currentPosition++;
-                    }
-                }
-
-                if(isLastTrack !== this.currentConsume)
-                {
-                    this.currentPosition=0;
-                }
-                else {
-                    this.currentPosition++;
-                }
+                this.currentPosition=this.getNextIndex();
             }
 
-            this.nextRandomIndex=undefined;
+			this.nextRandomIndex=undefined;
 
             this.askedForPrefetch=false;
 			this.pushState.bind(this);
@@ -441,31 +506,12 @@ CoreStateMachine.prototype.pushState = function () {
 };
 
 CoreStateMachine.prototype.pushEmptyState = function () {
-	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::pushEmptyState');
+	this.commandRouter.pushDebugConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::pushEmptyState');
 
 	var promise = libQ.defer();
 
-	var state = {
-		status: 'stop',
-		position: 0,
-		title: '',
-		artist: '',
-		album: '',
-		albumart: '/albumart',
-		duration:0,
-		uri: '',
-		seek: 0,
-		samplerate: '',
-		channels: '',
-		bitdepth: 0,
-		Streaming: false,
-		service: 'mpd',
-		volume: this.currentVolume,
-		random:this.currentRandom,
-		repeat: this.currentRepeat,
-		updatedb: this.currentUpdate,
-		consume: this.currentConsume
-	};
+	var state = this.getEmptyState();
+
 	var self = this;
 	self.commandRouter.volumioPushState(state)
 		.then(function (data) {
@@ -488,7 +534,13 @@ CoreStateMachine.prototype.pushError = function (sReason) {
 // Input state object has the form {status: sStatus, position: nPosition, seek: nSeek, duration: nDuration, samplerate: nSampleRate, bitdepth: nBitDepth, channels: nChannels, dynamictitle: sTitle}
 CoreStateMachine.prototype.syncState = function (stateService, sService) {
 	var  self = this;
-	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::syncState');
+	this.commandRouter.pushDebugConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::syncState');
+
+    //Checking if stateService is defined (REPLACE WITH CONDITIONAL LIBRARY AS SOON AS POSSIBLE)
+    if(!stateService)
+    {
+        this.commandRouter.pushErrorConsoleMessage('variable stateService in CoreStateMachine::syncState is undefined');
+    }
 
 
     if (this.isVolatile && stateService.status == 'play') {
@@ -534,9 +586,9 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
 
 	this.timeLastServiceStateUpdate = Date.now();
 
-	this.commandRouter.logger.info("STATE SERVICE "+JSON.stringify(stateService));
+    this.commandRouter.pushDebugConsoleMessage("STATE SERVICE "+JSON.stringify(stateService));
 
-	this.commandRouter.logger.info("CURRENT POSITION "+this.currentPosition);
+    this.commandRouter.pushDebugConsoleMessage("CURRENT POSITION "+this.currentPosition);
 
 
 	if (stateService.isStreaming != undefined) {
@@ -559,55 +611,117 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
 		if (this.currentStatus === 'play') {
 			this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'Received an update from plaugin. extracting info from payload');
 
-			//checking if prefetch has been done. In that case the update is sent elsewhere
-			if(this.askedForPrefetch==false) {
+			// Checking if system is in consume mode. If it is the status shall be stored
+			if(this.isConsume && stateService)
+            {
+                var consumeAlbum=stateService.album;
+                var consumeArtist=stateService.artist;
+                var consumeAlbumArt='/albumart';
 
-
-				if (stateService.seek !== undefined) {
-					this.currentSeek = stateService.seek;
+                if(consumeArtist)
+                {
+                    consumeAlbumArt=this.commandRouter.executeOnPlugin('miscellanea','albumart','getAlbumArt',
+                        {
+                            artist:consumeArtist,
+                            album:consumeAlbum
+                        });
+                }
+				if (stateService.service == undefined ) {
+					stateService.service = 'mpd';
 				}
 
-				if(trackBlock!==undefined)
-				{
-					if (stateService.duration !== undefined) {
-						trackBlock.duration = stateService.duration;
-					}
-
-					if (stateService.samplerate !== undefined && trackBlock.samplerate === undefined) {
-						trackBlock.samplerate = stateService.samplerate;
-					}
-
-					if (stateService.bitdepth !== undefined && trackBlock.bitdepth === undefined) {
-						trackBlock.bitdepth = stateService.bitdepth;
-					}
-
-					if (stateService.channels !== undefined && trackBlock.channels === undefined) {
-						trackBlock.channels = stateService.channels;
-					}
-
-					if (stateService.title !== undefined)
-					{
-						if(trackBlock.service==='webradio'  || trackBlock.name === undefined)
-							trackBlock.name = stateService.title;
-
-					}
-
-					if (stateService.artist !== undefined && trackBlock.artist === undefined) {
-						trackBlock.artist = stateService.artist;
-					}
-
-					if (stateService.album !== undefined && trackBlock.album === undefined) {
-						trackBlock.album = stateService.album;
-					}
-
-					if (stateService.albumart !== undefined && trackBlock.albumart === undefined) {
-						trackBlock.albumart = stateService.albumart;
-					}
+				if (this.consumeIgnoreMetadata != undefined && this.consumeIgnoreMetadata) {
+					console.log('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+					this.consumeState={
+						status:stateService.status,
+						title:trackBlock.name,
+						artist:trackBlock.artist,
+						album:trackBlock.album,
+						albumart:trackBlock.albumart,
+						uri:stateService.uri,
+						trackType:stateService.trackType,
+						seek:stateService.seek,
+						duration:stateService.duration,
+						samplerate:trackBlock.samplerate,
+						bitdepth:trackBlock.bitdepth,
+						channels:stateService.channels,
+						stream:stateService.isStreaming
+					};
+				} else {
+					console.log('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
+					this.consumeState={
+						status:stateService.status,
+						title:stateService.title,
+						artist:stateService.artist,
+						album:stateService.album,
+						albumart:consumeAlbumArt,
+						uri:stateService.uri,
+						trackType:stateService.trackType,
+						seek:stateService.seek,
+						duration:stateService.duration,
+						samplerate:stateService.samplerate,
+						bitdepth:stateService.bitdepth,
+						channels:stateService.channels,
+						stream:stateService.isStreaming,
+						service:stateService.service
+					};
+					console.log(consumeState)
 				}
 
-				this.currentStatus='play';
-				this.pushState().fail(this.pushError.bind(this));
-			}
+            }
+			else
+            {
+                //checking if prefetch has been done. In that case the update is sent elsewhere
+                if(this.askedForPrefetch==false) {
+
+
+                    if (stateService.seek !== undefined) {
+                        this.currentSeek = stateService.seek;
+                    }
+
+                    if(trackBlock!==undefined)
+                    {
+                        if (stateService.duration !== undefined) {
+                            trackBlock.duration = stateService.duration;
+                        }
+
+                        if (stateService.samplerate !== undefined && trackBlock.samplerate === undefined) {
+                            trackBlock.samplerate = stateService.samplerate;
+                        }
+
+                        if (stateService.bitdepth !== undefined && trackBlock.bitdepth === undefined) {
+                            trackBlock.bitdepth = stateService.bitdepth;
+                        }
+
+                        if (stateService.channels !== undefined && trackBlock.channels === undefined) {
+                            trackBlock.channels = stateService.channels;
+                        }
+
+                        if (stateService.title !== undefined)
+                        {
+                            if(trackBlock.service==='webradio'  || trackBlock.name === undefined)
+                                trackBlock.name = stateService.title;
+
+                        }
+
+                        if (stateService.artist !== undefined && trackBlock.artist === undefined) {
+                            trackBlock.artist = stateService.artist;
+                        }
+
+                        if (stateService.album !== undefined && trackBlock.album === undefined) {
+                            trackBlock.album = stateService.album;
+                        }
+
+                        if (stateService.albumart !== undefined && trackBlock.albumart === undefined) {
+                            trackBlock.albumart = stateService.albumart;
+                        }
+                    }
+                }
+            }
+
+
+            this.currentStatus='play';
+            this.pushState().fail(this.pushError.bind(this));
 		}
 		else if (this.currentStatus === 'stop') {
 
@@ -660,10 +774,10 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
 			this.currentBitDepth = null;
 			this.currentChannels = null;
 
-			this.commandRouter.logger.info("CURRENT POSITION "+this.currentPosition);
+            this.commandRouter.pushDebugConsoleMessage("CURRENT POSITION "+this.currentPosition);
 
 
-            console.log("RANDOM: "+this.currentRandom+ ' OBJ '+JSON.stringify(trackBlock));
+           // console.log("RANDOM: "+this.currentRandom+ ' OBJ '+JSON.stringify(trackBlock));
 
             if(trackBlock!==undefined && trackBlock.service!=='webradio')
 			{
@@ -696,7 +810,7 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
 			}
 
 
-			this.commandRouter.logger.info("CURRENT POSITION "+this.currentPosition);
+            this.commandRouter.pushDebugConsoleMessage("CURRENT POSITION "+this.currentPosition);
 
 			this.currentStatus = 'stop';
 
@@ -718,13 +832,13 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
                     this.askedForPrefetch=false;
                     this.simulateStopStartDone=false;
 
-                    this.logger.info("Prefetch done, skipping queuing");
+                    this.commandRouter.pushDebugConsoleMessage("Prefetch done, skipping queuing");
                 }
             }
             else
             {
                 if (this.currentPosition >= this.playQueue.arrayQueue.length) {
-                    this.commandRouter.logger.info("END OF QUEUE ");
+                    this.commandRouter.pushDebugConsoleMessage("END OF QUEUE ");
 
                     //Queuing following track;
                     if(this.currentRepeat!==undefined && this.currentRepeat===true)
@@ -746,11 +860,11 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
                             this.askedForPrefetch=false;
                             this.simulateStopStartDone=false;
 
-                            this.logger.info("Prefetch done, skipping queuing");
+                            this.commandRouter.pushDebugConsoleMessage("Prefetch done, skipping queuing");
                         }
 
 
-                        this.commandRouter.logger.info("Repeating playlist ");
+                        this.commandRouter.pushDebugConsoleMessage("Repeating playlist ");
                     }
                     else
                     {
@@ -778,7 +892,7 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
                         this.askedForPrefetch=false;
                         this.simulateStopStartDone=false;
                         this.pushState();
-                        this.logger.info("Prefetch done, skipping queuing");
+                        this.commandRouter.pushDebugConsoleMessage("Prefetch done, skipping queuing");
                     }
                 }
             }
@@ -788,7 +902,20 @@ CoreStateMachine.prototype.syncState = function (stateService, sService) {
 			this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'No code');
 		}
 	} else if (stateService.status === 'pause') {
-		if (this.currentStatus === 'pause') {
+        /**
+         * TODO: check if the section can be collapsed
+         */
+
+        if (this.currentStatus === 'play') {
+            if(this.isConsume)
+            {
+                this.consumeState.status='pause';
+                this.pushState().fail(this.pushError.bind(this));
+
+                return this.stopPlaybackTimer();
+            }
+        }
+	    else if (this.currentStatus === 'pause') {
 			this.pushState().fail(this.pushError.bind(this));
 
 			return this.stopPlaybackTimer();
@@ -873,7 +1000,7 @@ CoreStateMachine.prototype.play = function (index) {
 		{
 			if(self.currentPosition ==null || self.currentPosition===undefined)
 			{
-				self.logger.info("CURRENT POSITION NOT SET, RESETTING TO 0");
+                this.commandRouter.pushDebugConsoleMessage("CURRENT POSITION NOT SET, RESETTING TO 0");
 				self.currentPosition=0;
 			}
 
@@ -919,7 +1046,7 @@ CoreStateMachine.prototype.seek = function (position) {
 	var self=this;
 	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::seek');
 
-	self.setConsumeUpdateService(undefined);
+	//self.setConsumeUpdateService(undefined);
 
 	var trackBlock = this.getTrack(this.currentPosition);
 	if (trackBlock !== undefined)
@@ -942,25 +1069,23 @@ CoreStateMachine.prototype.next = function (promisedResponse) {
 	var self=this;
 	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::next');
 
-	self.setConsumeUpdateService(undefined);
+	//self.setConsumeUpdateService(undefined);
+
+	if (this.isConsume && this.consumeState.service != undefined) {
+		var thisPlugin = this.commandRouter.pluginManager.getPlugin('music_service', this.consumeState.service);
+		thisPlugin.next();
+	} else {
 
 	this.stop()
 		.then(function()
 		{
-			if(self.currentRandom!==undefined && self.currentRandom===true)
-			{
-				self.currentPosition=Math.floor(Math.random() * (self.playQueue.arrayQueue.length  + 1));
-			}
-			else if (self.currentPosition < self.playQueue.arrayQueue.length - 1) {
-				self.currentPosition++;
-			}
-
-			self.commandRouter.logger.info("NEXT POSITION "+self.currentPosition);
+			self.currentPosition = self.getNextIndex();
 
 			return libQ.resolve();
 		})
 		.then(self.play.bind(self))
 		.then(self.updateTrackBlock.bind(self));
+	}
 };
 
 
@@ -969,7 +1094,7 @@ CoreStateMachine.prototype.pause = function (promisedResponse) {
 
 	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::pause');
 
-	this.setConsumeUpdateService(undefined);
+	//this.setConsumeUpdateService(undefined);
 
 	if (this.currentStatus === 'play') {
 		this.currentStatus = 'pause';
@@ -1046,8 +1171,9 @@ CoreStateMachine.prototype.serviceStop = function () {
 CoreStateMachine.prototype.previous = function (promisedResponse) {
 	var self=this;
 
-	self.setConsumeUpdateService(undefined);
+	//self.setConsumeUpdateService(undefined);
 	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::previous');
+
 
 	if (this.currentStatus === 'stop') {
 		// Stop -> Previous transition
@@ -1063,22 +1189,25 @@ CoreStateMachine.prototype.previous = function (promisedResponse) {
 		}
 
 	} else if (this.currentStatus === 'play') {
-		if(this.currentRandom!==undefined && this.currentRandom===true)
-		{
-			this.stop();
-			setTimeout(function() {
-				self.currentPosition=Math.floor(Math.random() * (self.playQueue.arrayQueue.length));
-				self.play();
-			},500);
-		}
-		else if (this.currentPosition > 0) {
-			this.stop();
-			setTimeout(function()
-			{
-				self.currentPosition--;
-				self.play();
-			},500);
+		if (this.isConsume && this.consumeState.service != undefined) {
+			var thisPlugin = this.commandRouter.pluginManager.getPlugin('music_service', this.consumeState.service);
+			thisPlugin.previous();
+		} else {
+			if (this.currentRandom !== undefined && this.currentRandom === true) {
+				this.stop();
+				setTimeout(function () {
+					self.currentPosition = Math.floor(Math.random() * (self.playQueue.arrayQueue.length));
+					self.play();
+				}, 500);
+			}
+			else if (this.currentPosition > 0) {
+				this.stop();
+				setTimeout(function () {
+					self.currentPosition--;
+					self.play();
+				}, 500);
 
+			}
 		}
 	} else if (this.currentStatus === 'pause') {
 		// Pause -> Previous transition
@@ -1158,9 +1287,9 @@ CoreStateMachine.prototype.moveQueueItem = function (from,to) {
 	return this.playQueue.moveQueueItem(from,to);
 };
 
-CoreStateMachine.prototype.setConsumeUpdateService = function (value) {
+CoreStateMachine.prototype.setConsumeUpdateService = function (value, ignoremeta) {
 	this.commandRouter.pushConsoleMessage('[' + Date.now() + '] ' + 'CoreStateMachine::setConsumeUpdateService '+value);
-
+	console.log('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE '+value)
 	var defer;
 
 	/*if(value==undefined && this.consumeUpdateService!==undefined)
@@ -1182,7 +1311,14 @@ CoreStateMachine.prototype.setConsumeUpdateService = function (value) {
 	}
 
 	this.consumeUpdateService = value;
-
+	this.isConsume = value!=undefined;
+	this.consumeState.service = value;
+	if (ignoremeta != undefined) {
+		this.consumeIgnoreMetadata = ignoremeta;
+	} else {
+		this.consumeIgnoreMetadata = false;
+	}
+	console.log('EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE '+value)
 	return defer.promise;
 
 
