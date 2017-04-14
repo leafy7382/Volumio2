@@ -362,9 +362,33 @@ PluginManager.prototype.onVolumioStart = function () {
 
 	self.plugins.forEach(function (value, key) {
 		var plugin = value.instance;
-
+		
 		if (plugin.onVolumioStart != undefined)
 			plugin.onVolumioStart();
+	});
+};
+
+PluginManager.prototype.onVolumioShutdown = function () {
+	var self = this;
+
+	self.plugins.forEach(function (value, key) {
+		if (self.isEnabled(value.category, value.name)) {
+			var plugin = value.instance;
+			if (plugin.onVolumioShutdown != undefined)
+				plugin.onVolumioShutdown();
+		}
+	});
+};
+
+PluginManager.prototype.onVolumioReboot = function () {
+	var self = this;
+
+	self.plugins.forEach(function (value, key) {
+		if (self.isEnabled(value.category, value.name)) {
+			var plugin = value.instance;
+			if (plugin.onVolumioReboot != undefined)
+				plugin.onVolumioReboot();
+		}
 	});
 };
 
@@ -422,7 +446,7 @@ PluginManager.prototype.installPlugin = function (url) {
 	self.pushMessage('installPluginStatus',{'progress': 10, 'message': 'Downloading plugin','title' : modaltitle, 'advancedLog': advancedlog});
 
 
-	exec("/usr/bin/wget -O /tmp/downloaded_plugin.zip "+url, function (error, stdout, stderr) {
+	exec("/usr/bin/wget -O /tmp/downloaded_plugin.zip '" + url + "'", function (error, stdout, stderr) {
 
 		if (error !== null) {
 			currentMessage = "Cannot download file "+url+ ' - ' + error;
@@ -551,7 +575,7 @@ PluginManager.prototype.updatePlugin = function (data) {
 	self.pushMessage('installPluginStatus',{'progress': 10, 'message': 'Downloading Update','title' : modaltitle, 'advancedLog': advancedlog});
 
 
-	exec("/usr/bin/wget -O /tmp/downloaded_plugin.zip "+url, function (error, stdout, stderr) {
+	exec("/usr/bin/wget -O /tmp/downloaded_plugin.zip '" + url + "'", function (error, stdout, stderr) {
 
 		if (error !== null) {
 			currentMessage = "Cannot download file "+url+ ' - ' + error;
