@@ -343,6 +343,7 @@ var processExpressRequest = function (req, res) {
 	var web = req.query.web;
 	var path = req.query.path;
     var icon = req.query.icon;
+    var sourceicon = req.query.sourceicon;
 
     if(rawQuery !== undefined && rawQuery !== null)
     {
@@ -371,14 +372,32 @@ var processExpressRequest = function (req, res) {
 			res.sendFile(filePath);
 		})
 		.fail(function () {
+            res.setHeader('Cache-Control', 'public, max-age=2628000')
 		    if(icon!==undefined){
-
-
-				res.setHeader('Cache-Control', 'public, max-age=2628000')
-                res.sendFile(__dirname + '/icons/'+icon+'.jpg');
+                res.sendFile(__dirname + '/icons/'+icon+'.svg');
+			} else if (sourceicon!==undefined) {
+                try {
+                	var corepluginurl = '/volumio/app/plugins/' + sourceicon;
+                	var pluginurl = '/data/plugins/' + sourceicon;
+                	if (fs.existsSync(corepluginurl)) {
+                        res.sendFile(corepluginurl);
+                	} else {
+                    	res.sendFile(pluginurl);
+                	}
+            	}	catch(e) {
+                    try{
+                        res.sendFile(__dirname + '/default.jpg');
+                    } catch(e) {
+                        res.sendFile(__dirname + '/default.png');
+                    }
+				}
 			} else {
 			    res.setHeader('Cache-Control', 'public, max-age=2628000')
-			    res.sendFile(__dirname + '/default.png');
+                try{
+                    res.sendFile(__dirname + '/default.jpg');
+                } catch(e) {
+                    res.sendFile(__dirname + '/default.png');
+                }
 			}
 		});
 };

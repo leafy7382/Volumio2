@@ -158,6 +158,13 @@ CoreCommandRouter.prototype.volumioUpdateVolumeSettings = function (vol) {
 	}
 };
 
+CoreCommandRouter.prototype.updateVolumeScripts = function (data) {
+    this.pushConsoleMessage('CoreCommandRouter::volumioUpdateVolumeScripts');
+    if (this.volumeControl){
+        return this.volumeControl.updateVolumeScript(data);
+    }
+};
+
 CoreCommandRouter.prototype.addCallback = function (name, callback) {
 	if (this.callbacks[name] == undefined) {
 		this.callbacks[name] = [];
@@ -275,7 +282,7 @@ CoreCommandRouter.prototype.volumioImportServicePlaylists = function () {
 CoreCommandRouter.prototype.volumioSearch = function (data) {
 	this.pushConsoleMessage('CoreCommandRouter::Search '+data);
 	var asd = this.musicLibrary.search(data);
-	console.log(asd)
+
 	return this.musicLibrary.search(data);
 };
 
@@ -395,6 +402,18 @@ CoreCommandRouter.prototype.replaceAndPlay = function (arrayItems) {
         return this.stateMachine.addQueueItems(arrayItems);
     }
 };
+
+CoreCommandRouter.prototype.replaceAndPlayCue = function (arrayItems) {
+    this.pushConsoleMessage('CoreCommandRouter::volumioReplaceandPlayItems');
+    this.stateMachine.clearQueue();
+
+    if (arrayItems.uri != undefined && arrayItems.uri.indexOf('playlists/') >= 0) {
+        return this.playPlaylist(arrayItems.title)
+    } else  {
+        return this.stateMachine.addQueueItems(arrayItems);
+    }
+};
+
 
 
 // Volumio Check Favourites
@@ -973,6 +992,59 @@ CoreCommandRouter.prototype.getUIConfigOnPlugin = function (type, name, data) {
 	return thisPlugin.getUIConfig(data);
 };
 
+CoreCommandRouter.prototype.writePlayerControls = function (config) {
+	var self = this;
+	var pCtrlFile = '/data/playerstate/playback-controls.json';
+
+	this.pushConsoleMessage('CoreCommandRouter::writePlayerControls');
+
+	var state = self.stateMachine.getState();
+
+	var data = Object.assign({
+		random: state.random,
+		repeat: state.repeat
+	}, config);
+
+	fs.writeFile(pCtrlFile, JSON.stringify(data, null, 4), function (err) {
+		if (err) self.pushConsoleMessage('Failed setting player state in CoreCommandRouter::initPlayerState');
+	});
+};
+
+CoreCommandRouter.prototype.initPlayerControls = function () {
+	var pCtrlFile = '/data/playerstate/playback-controls.json';
+	var self = this;
+
+	this.pushConsoleMessage('CoreCommandRouter::initPlayerControls');
+
+	function handleError() {
+		self.pushConsoleMessage('Failed setting player state in CoreCommandRouter::initPlayerControls');
+	}
+
+	fs.ensureFile(pCtrlFile, function (err) {
+		if (err) handleError();
+
+		fs.readFile(pCtrlFile, function (err, data) {
+			if (err) handleError();
+
+			try {
+				var config = JSON.parse(data.toString());
+				self.stateMachine.setRepeat(config.repeat);
+				self.stateMachine.setRandom(config.random);
+			} catch(e) {
+				var state = self.stateMachine.getState();
+				var config = {
+					random: state.random,
+					repeat: state.repeat
+				};
+
+				fs.writeFile(pCtrlFile, JSON.stringify(config, null, 4), function (err) {
+					if (err) handleError();
+				});
+			}
+		});
+	});
+};
+
 /* what is this?
  CoreCommandRouter.prototype.getConfiguration=function(componentCode)
  {
@@ -1154,6 +1226,22 @@ CoreCommandRouter.prototype.volumioPlay = function (N) {
 	}
 };
 
+// Volumio Toggle
+CoreCommandRouter.prototype.volumioToggle = function () {
+    this.pushConsoleMessage('CoreCommandRouter::volumioToggle');
+
+    var state=this.stateMachine.getState();
+
+	if (state.status != undefined) {
+		if(state.status==='stop' || state.status==='pause')
+		{
+        		return this.stateMachine.play();
+    		} else {
+        		return this.stateMachine.pause();
+		}
+    }
+};
+
 
 // Volumio Seek
 CoreCommandRouter.prototype.volumioSeek = function (position) {
@@ -1284,13 +1372,65 @@ CoreCommandRouter.prototype.disableAndStopPlugin = function (category,name) {
 
 CoreCommandRouter.prototype.volumioRandom = function (data) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioRandom');
+
+	this.writePlayerControls({
+		random: data
+	});
+
 	return this.stateMachine.setRandom(data);
 };
 
+
+
+
+CoreCommandRouter.prototype.randomToggle = function(){
+    var self = this;
+
+    var state = self.stateMachine.getState();
+
+    if(state.random){
+        var random = false;
+    }
+    else{
+        var random = true;
+    }
+
+    this.writePlayerControls({
+        random: random
+	});
+
+    return self.stateMachine.setRandom(random);
+
+}
+
 CoreCommandRouter.prototype.volumioRepeat = function (repeat,repeatSingle) {
-	this.pushConsoleMessage('CoreCommandRouter::volumioRandom');
-	return this.stateMachine.setRepeat(repeat,repeatSingle);
+    this.pushConsoleMessage('CoreCommandRouter::volumioRandom');
+
+    this.writePlayerControls({
+        repeat: repeat
+    });
+
+    return this.stateMachine.setRepeat(repeat,repeatSingle);
 };
+
+CoreCommandRouter.prototype.repeatToggle = function () {
+    var self = this;
+
+    var state = self.stateMachine.getState();
+
+    if(state.repeat){
+        var repeat = false;
+    }
+    else{
+        var repeat = true;
+    }
+
+    this.writePlayerControls({
+        repeat: repeat
+    });
+
+    return self.stateMachine.setRepeat(repeat, false);
+}
 
 CoreCommandRouter.prototype.volumioConsume = function (data) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioConsume');
@@ -1523,4 +1663,37 @@ CoreCommandRouter.prototype.checkAndPerformSystemUpdates = function () {
 
 
     }
+}
+
+CoreCommandRouter.prototype.safeRemoveDrive = function (data) {
+    var self=this;
+    var defer = libQ.defer();
+
+    exec("/usr/bin/sudo /bin/umount /mnt/USB/"+data, function (error, stdout, stderr) {
+        if (error !== null) {
+            self.pushConsoleMessage(error);
+            self.pushToastMessage('error',data,
+                self.getI18nString('SYSTEM.CANNOT_REMOVE_MEDIA')+ ': ' +error);
+        } else {
+            self.pushToastMessage('success',self.getI18nString('SYSTEM.MEDIA_REMOVED_SUCCESSFULLY'),
+                self.getI18nString('SYSTEM.MEDIA_REMOVED_SUCCESSFULLY'));
+            self.executeOnPlugin('music_service', 'mpd', 'updateMpdDB', '/USB/');
+            execSync('/usr/bin/mpc update', { uid:1000, gid:1000, encoding: 'utf8' });
+            exec('/usr/bin/mpc idle update', {uid:1000, gid:1000, timeout: 10000}, function (error, stdout, stderr) {
+                if (error !== null) {
+                } else {
+                    var response = self.musicLibrary.executeBrowseSource('music-library/USB');
+                    if (response != undefined) {
+                        response.then(function (result) {
+                            defer.resolve(result);
+                        })
+                            .fail(function () {
+                                defer.reject();
+                            });
+                    }
+				}
+            });
+        }
+    });
+    return defer.promise;
 }

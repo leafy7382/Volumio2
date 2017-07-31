@@ -36,15 +36,17 @@ input {
 }
 ###############################################################################
 
+# Decoder ################################################################
 
+"${ffmpeg}"
+
+"${sacdiso}"
+
+###############################################################################
 
 # Audio Output ################################################################
 
-# remove comments when resampler will be reintroduced
-#resampler {
-#  		plugin "soxr"
-#  		quality "very high"
-#}
+${sox}
 
 audio_output {
 		type		"alsa"
@@ -56,6 +58,10 @@ audio_output {
 
 }
 
+
+
+
+
 audio_output {
     type            "fifo"
     enabled         "no"
@@ -63,7 +69,6 @@ audio_output {
     path            "/tmp/snapfifo"
     format          "44100:16:2"
 }
-
 
 #replaygain			"album"
 #replaygain_preamp		"0"
