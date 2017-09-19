@@ -17,18 +17,26 @@ var logFile = "/tmp/logondemand";
 // Let's start fresh!
 execSync("date >" + logFile);
 
-if (process.argv.slice(2)) {
-    var args = process.argv.slice(2);
+var args = process.argv.slice(2);
+var description;
+if ( args[0] == undefined ) {
+    description = 'Unknown';
 } else {
-    var args = ['Unknown'];
+    description = '';
+    // This will always yield a string that starts and ends with single quotes.
+    var pieces = args[0].split("'");
+    var n = pieces.length;
+    for (var i=0; i<n; i++) {
+        description = description + "'" + pieces[i] + "'";
+        if (i < (n-1)) description = description + "\\'";
+    }
 }
 
 try {
-    var args = process.argv.slice(2);
     //If description is supplied, add it
-    execSync("echo " + args[0] +  " >>" + logFile);
+    execSync("echo " + description + " >>" + logFile);
 } catch (e) {
-    console.log(error)
+    console.log(e);
 }
 
 execSync("cat /tmp/logfields >> " + logFile);
@@ -41,10 +49,12 @@ for (var itemN in commandArray) {
 
 // remove sensitive information
 commandArray = [
-    "sed -i -r -e 's/([Pp]assword:  *)([^ ]*)(.*)$/\1<elided> \3/'",
-    "sed -i -r -e 's/([Ss]potify  *.*token is )(.*)$/\1<elided>/'",
-    "sed -i -r -e 's/(--[Pp]assword[ ][ ]*)([^ ]*)/\1<elided>/'",
-    "sed -i -r -e 's/(wlan[0-9]: WPS: UUID [^:]*: ).*$/\1<elided>/'"
+    "sed -i -r -e 's/([Pp]assword:  *)([^ ]*)(.*)$/\\1<elided> \\3/'",
+    "sed -i -r -e 's/([Ss]potify  *.*token is )(.*)$/\\1<elided>/'",
+    "sed -i -r -e 's/(--[Pp]assword[ ][ ]*)([^ ]*)/\\1<elided>/'",
+    "sed -i -r -e 's/(wlan[0-9]: WPS: UUID [^:]*: ).*$/\\1<elided>/'",
+    "sed -i -r -e 's/(mount .*username=)([^,]*,)(.*)$/\\1<elided>,\\3/'",
+    "sed -i -r -e 's/(mount .*password=)([^,]*,)(.*)$/\\1<elided>,\\3/'"
 ];
 for (var itemN in commandArray) {
 	var item = commandArray[itemN];
@@ -52,17 +62,23 @@ for (var itemN in commandArray) {
 	try {
 		execSync(cmd);
 	} catch(e) {
-		console.log(error);
+		console.log(e);
 	}
 }
 
 var variant = getSystemVersion();
 
-var command = '/usr/bin/curl -X POST -H "Content-Type: multipart/form-data" -F "logFile=@'+logFile+'" -F "desc='+args[0]+'" -F "variant='+variant+'" "http://logs.volumio.org:7171/logs/v1"';
+// Use single quotes to avoid the shell expanding any characters in the form data
+// description is a special case, see above
+var command = "/usr/bin/curl -X POST -H 'Content-Type: multipart/form-data'"
+            + " -F 'logFile=@" + logFile + "'"
+            + " -F desc=" + description
+            + " -F 'variant=" + variant + "'"
+            + " 'http://logs.volumio.org:7171/logs/v1'";
 
 exec(command , {uid: 1000, gid: 1000, encoding: 'utf8'}, function (error, stdout, stderr) {
     if (error !== null) {
-        console.log('Canot send bug report: ' + error);
+        console.log('Cannot send bug report: ' + error);
     } else {
         console.log(stdout)
     }

@@ -357,8 +357,9 @@ function zip(){
             }
         }        
         var package = fs.readJsonSync("package.json");
-        execSync("cd " + process.cwd() + " && /usr/bin/minizip -o -9 " +
-            package.name + ".zip $(find -type f -not -name " + package.name + ".zip -printf '%P ')");
+        execSync("IFS=$'\\n'; /usr/bin/minizip -o -9 " + package.name +
+            ".zip $(find -type f -not -name " + package.name + ".zip -printf '%P\\n')",
+            {shell: '/bin/bash'}, {cwd: process.cwd()});
         console.log("Plugin succesfully compressed");
     }
     catch (e){
@@ -413,7 +414,7 @@ function publish() {
             
             zip();
             
-            execSync("/bin/cp -rp " + package.name + ".zip /tmp/");
+            execSync("/bin/mv " + package.name + ".zip /tmp/");
             process.chdir("../../../");
             execSync("/usr/bin/git checkout gh-pages");
             var arch = "";

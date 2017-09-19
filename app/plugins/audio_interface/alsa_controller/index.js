@@ -498,16 +498,18 @@ ControllerAlsa.prototype.getDSPDACOptions = function (data) {
 }
 
 ControllerAlsa.prototype.saveAlsaOptions = function (data) {
+    var self = this;
+    var defer = libQ.defer();
+    var uiPush = true;
 
 	//console.log('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + JSON.stringify(data));
 	if (data.output_device.label != undefined) {
 		data.output_device.label = data.output_device.label.replace('USB: ', '');
 	}
-	//console.log('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + JSON.stringify(data));
 
-	var self = this;
-
-	var defer = libQ.defer();
+    if(data.disallowPush != undefined && data.disallowPush) {
+        uiPush = false
+	}
 
 	var i2sstatus = self.commandRouter.executeOnPlugin('system_controller', 'i2s_dacs', 'getI2sStatus');
 
@@ -536,8 +538,10 @@ ControllerAlsa.prototype.saveAlsaOptions = function (data) {
 							}
 						]
 					}
-
-					self.commandRouter.broadcastMessage("openModal", responseData);
+					if (uiPush) {
+                        self.commandRouter.broadcastMessage("openModal", responseData);
+					}
+					self.commandRouter.executeOnPlugin('miscellanea', 'wizard', 'setWizardAction', {'action':'reboot', 'dacName':data.i2sid.label});
 				}
 				})
 					.fail(function () {
@@ -607,7 +611,9 @@ ControllerAlsa.prototype.saveAlsaOptions = function (data) {
 
 	respconfig.then(function(config)
 	{
-		self.commandRouter.broadcastMessage('pushUiConfig', config);
+        if (uiPush) {
+            self.commandRouter.broadcastMessage('pushUiConfig', config);
+        }
 	});
 
 	return defer.promise;
@@ -649,13 +655,17 @@ ControllerAlsa.prototype.saveVolumeOptions = function (data) {
 	self.setConfigParam({key: 'mixer', value: data.mixer.value});
 	} else if (data.mixer_type.value === 'Software') {
 		var outdevice = self.config.get('outputdevice');
-		self.enableSoftMixer(outdevice);
+		if (outdevice != 'softvolume'){
+			self.enableSoftMixer(outdevice);
+		}
 	} else if (data.mixer_type.value === 'None'){
 		self.setConfigParam({key: 'mixer', value: ''});
 		var outdevice = self.config.get('outputdevice');
 		if (outdevice === 'softvolume'){
             var outdevice = self.config.get('softvolumenumber');
             this.config.set('outputdevice', outdevice);
+            self.config.delete('softvolumenumber');
+            self.restartMpd.bind(self);
 		}
 		self.commandRouter.sharedVars.set('alsa.outputdevice', outdevice);
 		self.disableSoftMixer(outdevice);
@@ -746,7 +756,7 @@ ControllerAlsa.prototype.getLabelForSelectedCard = function (cards, key) {
 			return cards[i].name;
 	}
 
-	return 'No Audio Device Available';
+	return self.commandRouter.getI18nString('PLAYBACK_OPTIONS.NO_AUDIO_DEVICE_AVAILABLE');
 };
 
 ControllerAlsa.prototype.getLabelForSelect = function (options, key) {
@@ -762,65 +772,70 @@ ControllerAlsa.prototype.getLabelForSelect = function (options, key) {
 
 ControllerAlsa.prototype.getAlsaCards = function () {
 	var self=this;
-	var cards = [];
 	var multi = false;
+	var cards = [];
 	var carddata = fs.readJsonSync(('/volumio/app/plugins/audio_interface/alsa_controller/cards.json'),  'utf8', {throws: false});
 
 	try {
-        var soundCardDir = '/proc/asound/';
-        var soundFiles = fs.readdirSync(soundCardDir);
-
-        for (var i = 0; i < soundFiles.length; i++) {
-
-            if (soundFiles[i].indexOf('card') >= 0 && soundFiles[i] != 'cards'){
-				var cardnum = soundFiles[i].replace('card', '');
-				var cardinfo = self.getCardinfo(cardnum);
-				var rawname = cardinfo.name;
-				var name = rawname;
-				var id = cardinfo.id;
-                    for (var n = 0; n < carddata.cards.length; n++){
-                        var cardname = carddata.cards[n].name.toString().trim();
-                        if (cardname === rawname){
-                            if(carddata.cards[n].multidevice) {
-                                multi = true;
-                                var card = carddata.cards[n];
-                                for (var j = 0; j < card.devices.length; j++) {
-                                    var subdevice = carddata.cards[n].devices[j].number;
-                                    name = carddata.cards[n].devices[j].prettyname;
-                                    cards.push({id: id + ',' + subdevice, name: name});
-                                }
-
-                            } else {
-                                multi = false;
-                                name = carddata.cards[n].prettyname;
-                            }
-
+		var aplaycards = self.getAplayInfo();
+        for (var k = 0; k < aplaycards.length; k++){
+        	var aplaycard = aplaycards[k];
+        	var name = aplaycard.name;
+        	var id = aplaycard.id;
+            for (var n = 0; n < carddata.cards.length; n++){
+                var cardname = carddata.cards[n].name.toString().trim();
+                if (cardname === name){
+                    if(carddata.cards[n].multidevice) {
+                        multi = true;
+                        var card = carddata.cards[n];
+                        for (var j = 0; j < card.devices.length; j++) {
+                            var subdevice = carddata.cards[n].devices[j].number;
+                            name = carddata.cards[n].devices[j].prettyname;
+                            cards.push({id: id + ',' + subdevice, name: name});
                         }
-                    } if (!multi){
-                        cards.push({id: id, name: name});
-                    }
-                }
 
+                    } else {
+                        multi = false;
+                        name = carddata.cards[n].prettyname;
+                    }
+
+                }
+            } if (!multi){
+                cards.push({id: id, name: name});
             }
+        }
 	} catch (e) {
-		var namestring = 'No Audio Device Available';
+		var namestring = self.commandRouter.getI18nString('PLAYBACK_OPTIONS.NO_AUDIO_DEVICE_AVAILABLE');
 		cards.push({id: '', name: namestring});
 	}
-	return cards;
+    return cards
 };
 
-ControllerAlsa.prototype.getCardinfo = function (cardnum) {
-	var self = this;
-	var info = fs.readFileSync('/proc/asound/card'+cardnum+'/pcm0p/info').toString().trim().split('\n');
-
-    for (var e = 0; e < info.length; e++) {
-        if (info[e].indexOf('id') >= 0) {
-        	var infoname = info[e].split(':')[1].replace(' ', '');
-        }
-
-    }
-    	var cardinfo = {'id':cardnum,'name':infoname};
-        return cardinfo
+ControllerAlsa.prototype.getAplayInfo = function () {
+    var self = this;
+    var defer = libQ.defer();
+    var cards = [];
+    try {
+        var aplaycmd = execSync('/usr/bin/aplay -l', {uid: 1000, gid: 1000, encoding: 'utf8'});
+            var currentCard;
+            var line = aplaycmd.split('\n')
+            for (var i = 0; i < line.length; i++) {
+                if (line[i].indexOf('card')>= 0) {
+                    var info = line[i].split(',')[0];
+                    var num = info.split(':')[0].replace('card ', '');
+                    var name = info.split('[')[1].replace(']', '');
+                    var card = {'id': num, 'name': name};
+                    if (num != currentCard) {
+                        cards.push(card);
+                    }
+                    currentCard = num;
+                }
+            }
+	} catch (e) {
+        console.log('Cannot get aplay -l output: '+e);
+        return cards
+	}
+	return cards
 }
 
 ControllerAlsa.prototype.getMixerControls  = function (device) {
@@ -848,7 +863,10 @@ ControllerAlsa.prototype.getMixerControls  = function (device) {
 						mixer = mixer + ',1';
 					}
 				}
-				mixers.push(mixer);
+                if (mixer.indexOf('Internal Clock Validity') < 0) {
+                    mixers.push(mixer);
+                }
+
 			}
 		}
 	} catch (e) {}
@@ -867,7 +885,8 @@ ControllerAlsa.prototype.setDefaultMixer  = function (device) {
 	var mixertpye = '';
 	var carddata = fs.readJsonSync(('/volumio/app/plugins/audio_interface/alsa_controller/cards.json'),  'utf8', {throws: false});
 	var cards = self.getAlsaCards();
-	var i2sstatus = self.commandRouter.executeOnPlugin('system_controller', 'i2s_dacs', 'getI2sStatus');
+
+    var i2sstatus = self.commandRouter.executeOnPlugin('system_controller', 'i2s_dacs', 'getI2sStatus');
 
 
 	for (var i in cards) {
@@ -932,7 +951,9 @@ ControllerAlsa.prototype.setDefaultMixer  = function (device) {
 						var line2 = line[0].split(',')
 						var mixerspace = line2[0].replace(/'/g, "");
 						var mixer = mixerspace.replace(" ", "");
-						mixers.push(mixer);
+                        if (mixer.indexOf('Internal Clock Validity') < 0) {
+                            mixers.push(mixer);
+                        }
 					}
 				}
 				if (mixers[0] && mixers[0] != 'SoftMaster') {
@@ -1292,28 +1313,40 @@ ControllerAlsa.prototype.getAudioDevices  = function () {
 	}
 
 	var outdevicename = self.config.get('outputdevicename');
+    var outputdevice = self.config.get('outputdevice');
 	if (outdevicename) {
 
 	} else {
-		outdevicename = devicesarray[0].name;
+		if  (devicesarray.length > 0) {
+            outdevicename = devicesarray[0].name;
+            outputdevice = devicesarray[0].id;
+		} else {
+            outdevicename = self.commandRouter.getI18nString('PLAYBACK_OPTIONS.NO_AUDIO_DEVICE_AVAILABLE');
+            outputdevice = 'nodev';
+
+		}
+
 	}
 
 	var i2soptions = self.commandRouter.executeOnPlugin('system_controller', 'i2s_dacs', 'getI2sOptions');
 	var i2sstatus = self.commandRouter.executeOnPlugin('system_controller', 'i2s_dacs', 'getI2sStatus');
-	if (i2sstatus.enabled) {
-		i2sdevice = i2sstatus.name;
-	}
 
 	if(i2soptions.length > 0) {
+        if (i2sstatus.enabled) {
+            i2sdevice = i2sstatus.name;
+        } else {
+            i2sdevice = i2soptions[0].label;
+        }
+
 		var i2sarray = [];
 		for(var i in i2soptions) {
 			var i2scard = {'id': i2soptions[i].value, 'name': i2soptions[i].label}
 			i2sarray.push(i2scard)
 		}
-		var response = {'devices':{'active':outdevicename,'available':devicesarray},'i2s':{'enabled':i2sstatus.enabled,'active':i2sdevice,'available':i2sarray}};
+		var response = {'devices':{'active':{'name':outdevicename, 'id':outputdevice},'available':devicesarray},'i2s':{'enabled':i2sstatus.enabled,'active':i2sdevice,'available':i2sarray}};
 		defer.resolve(response);
 	} else {
-		var response = {'devices':devicesarray}
+		var response = {'devices':{'active':{'name':outdevicename, 'id':outputdevice},'available':devicesarray}};
 		defer.resolve(response);
 	}
 

@@ -87,6 +87,9 @@ ControllerNetworkfs.prototype.getUIConfig = function () {
 			self.configManager.setUIConfigParam(uiconf, 'sections[2].content[1].value.value', websize);
 			self.configManager.setUIConfigParam(uiconf, 'sections[2].content[1].value.label', self.getLabelForSelect(self.configManager.getValue(uiconf, 'sections[2].content[1].options'), websize));
 
+            var metadataimage = self.getAdditionalConf('miscellanea', 'albumart', 'metadataimage', false);
+            self.configManager.setUIConfigParam(uiconf, 'sections[2].content[2].value', metadataimage);
+            self.configManager.setUIConfigParam(uiconf, 'sections[2].content[2].value.label', self.getLabelForSelect(self.configManager.getValue(uiconf, 'sections[2].content[2].options'), metadataimage));
 
             var tracknumbersConf = self.getAdditionalConf('music_service', 'mpd', 'tracknumbers', false);
 			self.configManager.setUIConfigParam(uiconf, 'sections[3].content[0].value', tracknumbersConf);
@@ -103,7 +106,7 @@ ControllerNetworkfs.prototype.getUIConfig = function () {
                 self.configManager.setUIConfigParam(uiconf, 'sections[3].content[2].value.label', 'artist')
             }
 
-            var ffmpeg = self.getAdditionalConf('music_service', 'mpd', 'ffmpegenable', true);
+            var ffmpeg = self.getAdditionalConf('music_service', 'mpd', 'ffmpegenable', false);
             self.configManager.setUIConfigParam(uiconf, 'sections[3].content[3].value', ffmpeg);
 
 			defer.resolve(uiconf);
@@ -200,9 +203,9 @@ ControllerNetworkfs.prototype.mountShare = function (data) {
 			credentials = 'guest,';
 		}
 		if (options) {
-			fsopts = credentials + "ro,dir_mode=0777,file_mode=0666,iocharset=utf8,noauto,"+options;
+			fsopts = credentials + "ro,dir_mode=0777,file_mode=0666,iocharset=utf8,noauto,soft,"+options;
 		} else {
-			fsopts = credentials + "ro,dir_mode=0777,file_mode=0666,iocharset=utf8,noauto";
+			fsopts = credentials + "ro,dir_mode=0777,file_mode=0666,iocharset=utf8,noauto,soft";
 		}
 
 	} else { // nfs

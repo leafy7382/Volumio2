@@ -39,6 +39,7 @@ function CoreCommandRouter(server) {
 	this.callbacks = [];
 	this.sharedVars = new vconf();
     this.sharedVars.registerCallback('language_code',this.loadI18nStrings.bind(this));
+    this.sharedVars.addConfigValue('selective_search','boolean',true);
 
 	this.logger.info("-------------------------------------------");
 	this.logger.info("-----            Volumio2              ----");
@@ -246,6 +247,11 @@ CoreCommandRouter.prototype.volumioRemoveToBrowseSources = function (data) {
 CoreCommandRouter.prototype.volumioUpdateToBrowseSources = function (name,data) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioUpdateToBrowseSources' + data);
 	return this.musicLibrary.updateBrowseSources(name,data);
+};
+
+CoreCommandRouter.prototype.setSourceActive = function (data) {
+    this.pushConsoleMessage('CoreCommandRouter::volumiosetSourceActive' + data);
+    return this.musicLibrary.setSourceActive(data);
 };
 // Volumio Get Playlist Index
 CoreCommandRouter.prototype.volumioGetPlaylistIndex = function (sUid) {
@@ -1235,9 +1241,13 @@ CoreCommandRouter.prototype.volumioToggle = function () {
 	if (state.status != undefined) {
 		if(state.status==='stop' || state.status==='pause')
 		{
-        		return this.stateMachine.play();
-    		} else {
-        		return this.stateMachine.pause();
+			return this.stateMachine.play();
+		} else {
+			if(state.trackType == 'webradio') {
+				return this.stateMachine.stop();
+			} else {
+				return this.stateMachine.pause();
+			}
 		}
     }
 };

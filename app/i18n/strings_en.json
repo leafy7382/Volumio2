@@ -105,7 +105,13 @@
 	"ENABLE_CUSTOM_DNS":"Enable custom DNS server",
 	"PRIMARY_DNS":"Primary DNS",
   	"SECONDARYY_DNS":"Secondary DNS",
-	"DNS_ERROR_INFO":"Please fill both DNS IP addresses properly"
+	"DNS_ERROR_INFO":"Please fill both DNS IP addresses properly",
+    "WIRELESS_NETWORK_CONNECTION_SUCCESSFUL":"Successfully connected to network",
+    "WIRELESS_NETWORK_CONNECTION_SUCCESSFUL_PROCEED":"Please proceed to next step",
+    "WIRELESS_NETWORK_CONNECTION_ERROR":"Failed to connect to network ",
+    "WIRELESS_NETWORK_CONNECTION_ERROR_PROCEED":"Please retry or proceed to next step",
+    "WIRELESS_NETWORK_CONNECTION_DEFER":"The unit will connect to network",
+    "WIRELESS_NETWORK_CONNECTION_DEFER2":"when first setup will be completed"
   },
   "NETWORKFS":{
     "ALIAS_DOC":"Choose an Alias that will be displayed in NAS Mounts",
@@ -201,8 +207,11 @@
     "COMPILATION_METADATA_DOC":"Configure the metadata fields used to describe albumartist in compilations or 'multiple artist' albums, use comma separated fields",
     "COMPILATION_METADATA":"Compilation metadata fields",
     "ALBUMART_CACHE_CLEARED":"Album Art cache reset successfully",
+    "ALBUMART_CACHE_CLEAR_ERROR":"Error claring albumart cache, please retry in few minutes",
     "ALBUMART_RESET_CACHE":"Reset Album Art cache",
-    "ALBUMART_RESET_CACHE_DOC":"The system caches your albumart to improve performances, however this prevents newly added albumart to show. By resetting the cache you will be able to see newly added albumarts"
+    "ALBUMART_RESET_CACHE_DOC":"The system caches your albumart to improve performance, but this prevents newly added albumart from being shown. By resetting the cache you will be able to see newly added albumart",
+    "METADATA_IMAGE":"Show embedded albumart",
+    "METADATA_IMAGE_DOC":"When enabled, if no albumart file can be found in the folder, the system will attempt to extract any albumart embedded in your music files. This will most likely increase albumart loading times"
   },
   "MAIN_MENU":{
     "MY_MUSIC":"My Music",
@@ -272,5 +281,10 @@
     "UPDATING_PLUGIN":"Updating Plugin",
     "DOWNLOADING_FROM":"Downloading Plugin from ",
     "DOWNLOADING":"Downloading Plugin"
+  },
+  "WIZARD":{
+    "CONGRATULATIONS":"Congratulations",
+    "DEVICE_SUCCESSFULLY_CONFIGURED":"has been configured and it's ready to play",
+    "PLEASE_DONATE":"If you like Volumio please consider donating. You can make the difference for this project!"
   }
 }

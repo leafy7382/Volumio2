@@ -15,7 +15,7 @@ function PlatformSpecific(coreCommand) {
 PlatformSpecific.prototype.shutdown = function () {
 	var self = this;
 	execSync("/bin/sync", { uid: 1000, gid: 1000});
-	exec("sudo /sbin/shutdown -h now", function (error, stdout, stderr) {
+	exec("/usr/bin/sudo systemctl poweroff", function (error, stdout, stderr) {
 		if (error !== null) {
 			self.coreCommand.pushConsoleMessage(error);
 		} else self.coreCommand.pushConsoleMessage('Shutting Down');
@@ -25,7 +25,7 @@ PlatformSpecific.prototype.shutdown = function () {
 PlatformSpecific.prototype.reboot = function () {
 	var self = this;
 	execSync("/bin/sync", { uid: 1000, gid: 1000});
-	exec("sudo /sbin/reboot", function (error, stdout, stderr) {
+	exec("/usr/bin/sudo systemctl reboot", function (error, stdout, stderr) {
 		if (error !== null) {
 			self.coreCommand.pushConsoleMessage(error);
 		} else self.coreCommand.pushConsoleMessage('Rebooting');
@@ -54,13 +54,18 @@ PlatformSpecific.prototype.wirelessRestart = function () {
 		if (error !== null) {
 			self.coreCommand.pushToastMessage('error',self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_TITLE'),
                 self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_ERROR')+error);
-		} else
-			self.coreCommand.pushToastMessage('success',self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_TITLE'),
-                self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_SUCCESS'))
-		// Restart Upmpdcli
-		setTimeout(function () {
-			self.coreCommand.executeOnPlugin('audio_interface', 'upnp', 'onRestart', '');
-		}, 10000);
+		} else {
+            self.coreCommand.pushToastMessage('success',self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_TITLE'),
+                self.coreCommand.getI18nString('NETWORK.WIRELESS_RESTART_SUCCESS'));
+            setTimeout(function (){
+            self.coreCommand.executeOnPlugin('miscellanea', 'wizard', 'reportWirelessConnection', '');
+            }, 5000);
+            // Restart Upmpdcli
+            setTimeout(function () {
+                self.coreCommand.executeOnPlugin('audio_interface', 'upnp', 'onRestart', '');
+            }, 10000);
+		}
+
 	});
 };
 
