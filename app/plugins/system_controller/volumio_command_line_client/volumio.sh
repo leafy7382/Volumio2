@@ -33,9 +33,9 @@ clear
 
 [[VOLUMIO SERVICE CONTROL]]
 
-start                               Starts Volumio Service
+vstart                              Starts Volumio Service
 vstop                               Stops Volumio Service
-restart                             Restarts Volumio Service
+vrestart                            Restarts Volumio Service
 
 [[VOLUMIO DEVELOPMENT]]
 
@@ -47,13 +47,15 @@ plugin init                        Creates a new plugin
 plugin refresh                     updates plugin in the system
 plugin package                     compresses the plugin
 plugin publish                     publishes the plugin on git
+plugin install                     installs the plugin locally
+plugin update                      updates the plugin
 "
 
 }
 
 #VOLUMIO SERVICE CONTROLS
 
-start() {
+vstart() {
 echo volumio | sudo -S systemctl start volumio.service
 }
 
@@ -64,6 +66,7 @@ echo volumio | sudo -S systemctl stop volumio.service
 #VOLUMIO DEVELOPMENT
 
 pull() {
+cd /
 echo "Stopping Volumio"
 echo volumio | sudo -S systemctl stop volumio.service
 echo volumio | sudo -S sh /volumio/app/plugins/system_controller/volumio_command_line_client/commands/pull.sh $1 $2 $3
@@ -125,20 +128,20 @@ case "$1" in
         stopairplay)
            /usr/bin/curl "http://127.0.0.1:3000/api/v1/commands/?cmd=stopAirplay"
         ;;
-        start)
-            start
+        vstart)
+            vstart
             ;;
-        start)
-            start
+        vstart)
+            vstart
             ;;
 
         vstop)
-            stop
+            vstop
             ;;
 
-        restart)
-            stop
-            start
+        vrestart)
+            vstop
+            vstart
             ;;
 
         status)
@@ -179,6 +182,14 @@ correspondent folder in data"
                     echo ""
                     echo "This command will publish the plugin on volumio plugins store"
                     echo ""
+                elif [ "$2" == "install" ]; then
+                    echo ""
+                    echo "This command will install the plugin on your device"
+                    echo ""
+                elif [ "$2" == "update" ]; then
+                    echo ""
+                    echo "This command will update the plugin on your device"
+                    echo ""
                 fi
                /usr/local/bin/node /volumio/pluginhelper.js $2
             else
@@ -191,6 +202,8 @@ correspondent folder in data"
                 echo "refresh   copies the plugin in the system"
                 echo "package   compresses the plugin"
                 echo "publish   publishes the plugin on git"
+                echo "install   installs the plugin locally"
+                echo "update    updates the plugin"
                 echo ""
             fi
             ;;

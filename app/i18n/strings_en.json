@@ -177,7 +177,9 @@
 	"CONTINUE":"Continue",
 	"SETTINGS_SAVED_SUCCESSFULLY":"Settings saved successfully",
 	"SETTINGS_SAVE_ERROR":"Error in saving settings",
-	"ERROR":"Error"
+	"ERROR":"Error",
+    "UPDATING_MUSIC_DB_WAIT_MESSAGE":"Your music is being scanned and the icon on bottom left will keep spinning until all your library has been successfully indexed. Since the system might be less responsive during this operation, please don't use the system while music is being indexed ",
+    "GOT_IT":"Got it"
   },
   "APPEARANCE":{
     "APPEARANCE":"Appearance",
@@ -264,7 +266,23 @@
 	"UPDATE_ALREADY_LATEST_VERSION":"You're already on the latest version",
 	"NO_UPDATE_AVAILABLE":"No Updates Available",
     "CANNOT_REMOVE_MEDIA":"Cannot remove media",
-    "MEDIA_REMOVED_SUCCESSFULLY":"Media Removed Successfully"
+    "MEDIA_REMOVED_SUCCESSFULLY":"Media Removed Successfully",
+    "INSTALL_TO_DISK":"Install to Disk",
+    "INSTALLING_TO_DISK":"Installing to Disk",
+    "INSTALLING_TO_DISK_MESSAGE":"Installing to Disk, please wait",
+    "INSTALLING_TO_DISK_ERROR_MESSAGE":"Install to Disk failed",
+    "INSTALLING_TO_DISK_ERROR_TARGET_SIZE":"Cannot install on this Disk: destination Disk must be bigger than source disk",
+    "INSTALL_TO_DISK_DESC":"Install on Disk",
+    "INSTALL_TO_DISK_MESSAGE":"Confirm you want to Install Volumio on Disk",
+    "INSTALL_TO_DISK_LABEL":"LABEL",
+    "INSTALL_TO_DISK_SIZE":"SIZE",
+    "INSTALL_TO_DISK_MESSAGE_WARNING":". WARNING: Be careful to select the correct destination disk, as all data on it will be deleted!",
+    "INSTALLING_TO_DISK_SUCCESS_TITLE":"System successfully installed to Disk",
+    "INSTALLING_TO_DISK_SUCCESS_MESSAGE":"In order to use your newly installed system, restart the system and remove any removable media",
+    "CREDITS_OPEN_SOURCE_LICENSES":"Credits and Open Source licenses",
+    "VIDEO_OUT_OPTIONS": "Video output options",
+    "HDMI_UI_DOC":"Show User Interface via HDMI Video Output. WARNING: This will degrade system performances",
+    "HDMI_UI":"User Interface via HDMI"
   },
   "WEBRADIO":{
     "MY_WEB_RADIOS":"My Web Radios",
@@ -280,11 +298,13 @@
     "UNINSTALL":"Uninstall",
     "UPDATING_PLUGIN":"Updating Plugin",
     "DOWNLOADING_FROM":"Downloading Plugin from ",
-    "DOWNLOADING":"Downloading Plugin"
+    "DOWNLOADING":"Downloading Plugin",
+    "NO_CONFIGURATION_AVAILABLE":"No configuration available"
   },
   "WIZARD":{
     "CONGRATULATIONS":"Congratulations",
     "DEVICE_SUCCESSFULLY_CONFIGURED":"has been configured and it's ready to play",
-    "PLEASE_DONATE":"If you like Volumio please consider donating. You can make the difference for this project!"
+    "PLEASE_DONATE":"If you like Volumio please consider donating. You can make the difference for this project!",
+    "RUN_FIRST_CONFIG_WIZARD":"Run first config Wizard"
   }
 }

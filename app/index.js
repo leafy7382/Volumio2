@@ -56,6 +56,9 @@ function CoreCommandRouter(server) {
     this.pluginManager = new (require(__dirname + '/pluginmanager.js'))(this, server);
     this.pluginManager.checkIndex();
     this.pluginManager.pluginFolderCleanup();
+    this.configManager=new(require(__dirname+'/configManager.js'))(this.logger);
+
+
     this.pluginManager.loadPlugins();
     this.pluginManager.startPlugins();
 
@@ -79,6 +82,10 @@ function CoreCommandRouter(server) {
     this.pushConsoleMessage('BOOT COMPLETED');
 
     this.startupSound();
+
+
+    	this.closeModals();
+
 }
 
 // Methods usually called by the Client Interfaces ----------------------------------------------------------------------------
@@ -135,8 +142,13 @@ CoreCommandRouter.prototype.volumioClearQueue = function () {
 
 // Volumio Set Volume
 CoreCommandRouter.prototype.volumiosetvolume = function (VolumeInteger) {
+	var self = this;
 	this.callCallback("volumiosetvolume", VolumeInteger);
-	return this.volumeControl.alsavolume(VolumeInteger);
+
+	var volSet = this.volumeControl.alsavolume(VolumeInteger);
+    volSet.then(function (result) {
+		 return self.volumioupdatevolume(result);
+    })
 };
 
 // Volumio Update Volume
@@ -991,11 +1003,39 @@ CoreCommandRouter.prototype.executeOnPlugin = function (type, name, method, data
 };
 
 CoreCommandRouter.prototype.getUIConfigOnPlugin = function (type, name, data) {
-	this.pushConsoleMessage('CoreCommandRouter::getUIConfigOnPlugin');
+	var self=this
+    this.pushConsoleMessage('CoreCommandRouter::getUIConfigOnPlugin');
+	var noConf = {"page": {"label": self.getI18nString('PLUGINS.NO_CONFIGURATION_AVAILABLE')}, "sections": []};
+
+	var defer=libQ.defer()
 
 	var thisPlugin = this.pluginManager.getPlugin(type, name);
 
-	return thisPlugin.getUIConfig(data);
+	try {
+        thisPlugin.getUIConfig(data)
+            .then(function(uiconf){
+                var filePath=__dirname + '/plugins/'+type+'/'+name+'/override.json'
+
+                self.overrideUIConfig(uiconf,filePath)
+                    .then(function(){
+                        defer.resolve(uiconf)
+                    })
+                    .fail(function()
+                    {
+                        defer.reject(new Error());
+                    })
+            })
+            .fail(function()
+            {
+                defer.reject(new Error("Error retrieving UIConfig from plugin "+name))
+            })
+	} catch(e) {
+        defer.resolve(noConf)
+	}
+
+
+
+	return defer.promise;
 };
 
 CoreCommandRouter.prototype.writePlayerControls = function (config) {
@@ -1051,13 +1091,6 @@ CoreCommandRouter.prototype.initPlayerControls = function () {
 	});
 };
 
-/* what is this?
- CoreCommandRouter.prototype.getConfiguration=function(componentCode)
- {
- console.log("_________ "+componentCode);
- }
- */
-
 
 /**
  * This method shall be used to push debug messages
@@ -1076,17 +1109,8 @@ CoreCommandRouter.prototype.pushErrorConsoleMessage = function (sMessage) {
 };
 
 CoreCommandRouter.prototype.pushConsoleMessage = function (sMessage) {
+	// Uncomment for more logging
 	this.logger.info(sMessage);
-	/*
-	 var self = this;
-	 return libQ.all(
-	 libFast.map(self.pluginManager.getPluginNames.call(self.pluginManager, 'user_interface'), function(sInterface) {
-	 var thisInterface = self.pluginManager.getPlugin.call(self.pluginManager, 'user_interface', sInterface);
-	 if( typeof thisInterface.printConsoleMessage === "function")
-	 return thisInterface.printConsoleMessage.call(thisInterface, sMessage);
-	 })
-	 );
-	 */
 };
 
 CoreCommandRouter.prototype.pushToastMessage = function (type, title, message) {
@@ -1164,13 +1188,27 @@ CoreCommandRouter.prototype.pushAirplay = function (data) {
 // Platform specific & Hardware related options, they can be found in platformSpecific.js
 // This allows to change system commands across different devices\environments
 CoreCommandRouter.prototype.shutdown = function () {
-	this.pluginManager.onVolumioShutdown();
-	this.platformspecific.shutdown();
+	var self = this;
+	
+	self.pluginManager.onVolumioShutdown().then( function() {
+		self.platformspecific.shutdown();
+	}).fail(function(e){
+		self.logger.info("Error in onVolumioShutdown Plugin Promise handling: "+ e);
+		self.platformspecific.shutdown();
+	});
+	
 };
 
 CoreCommandRouter.prototype.reboot = function () {
-	this.pluginManager.onVolumioReboot();
-	this.platformspecific.reboot();
+	var self = this;
+	
+	self.pluginManager.onVolumioReboot().then( function() {
+		 self.platformspecific.reboot();
+	}).fail(function(e){
+		self.logger.info("Error in onVolumioReboot Plugin Promise handling: "+ e);
+		self.platformspecific.reboot();
+	});
+	
 };
 
 CoreCommandRouter.prototype.networkRestart = function () {
@@ -1601,12 +1639,13 @@ CoreCommandRouter.prototype.translateKeys = function (parent,dictionary,defaultD
                 else {
                     var category=replaceKey.slice(0,dotIndex);
                     var key=replaceKey.slice(dotIndex+1);
-
-                    var value=dictionary[category][key];
-                    if(value===undefined)
+					
+                    if(dictionary[category]===undefined || dictionary[category][key]===undefined)
                     {
-                        value=defaultDictionary[category][key];
-                    }
+                        var value=defaultDictionary[category][key];
+                    } else {
+                        var value=dictionary[category][key];
+					}
                     parent[keys[i]]=value;
                 }
 
@@ -1617,6 +1656,59 @@ CoreCommandRouter.prototype.translateKeys = function (parent,dictionary,defaultD
         }
     }
 }
+
+CoreCommandRouter.prototype.overrideUIConfig = function (uiconfig, overrideFile) {
+    var self=this;
+    var methodDefer=libQ.defer();
+
+    fs.readJson(overrideFile, function(err,override){
+
+        if(err)
+        {
+            methodDefer.resolve()
+        }
+        else {
+            for(var i in override)
+            {
+                var attr=override[i]
+
+                var attribute_name=attr.attribute_name
+                var attribute_value=attr.value
+                var id=attr.id
+
+                self.overrideField(uiconfig,id,attribute_name,attribute_value)
+            }
+
+            methodDefer.resolve()
+        }
+    })
+
+    return methodDefer.promise;
+
+};
+
+CoreCommandRouter.prototype.overrideField = function (parent,id,attribute_name,attribute_value) {
+    var self=this;
+
+    if(typeof(parent)==='object')
+    {
+        if(parent.id===id)
+        {
+            parent[attribute_name]=attribute_value
+        } else {
+            var keys=Object.keys(parent);
+
+            for(var i in keys)
+            {
+                var obj=parent[keys[i]];
+
+                self.overrideField(obj,id,attribute_name,attribute_value);
+            }
+
+        }
+    }
+}
+
 
 CoreCommandRouter.prototype.updateBrowseSourcesLang = function () {
 	var self=this;
@@ -1707,3 +1799,96 @@ CoreCommandRouter.prototype.safeRemoveDrive = function (data) {
     });
     return defer.promise;
 }
+
+CoreCommandRouter.prototype.closeModals = function () {
+    var self=this;
+    this.pushConsoleMessage('CoreCommandRouter::Close All Modals sent');
+
+    return self.broadcastMessage('closeAllModals', '');
+}
+
+CoreCommandRouter.prototype.getMyVolumioToken = function () {
+    var self=this;
+    var defer = libQ.defer();
+
+    var response = self.executeOnPlugin('system_controller', 'my_volumio', 'getMyVolumioToken', '');
+
+    if (response != undefined) {
+        response.then(function (result) {
+            defer.resolve(result);
+        })
+            .fail(function () {
+                var jsonobject = {"tokenAvailable":false}
+                defer.resolve(jsonobject);
+            });
+    }
+
+    return defer.promise;
+}
+
+CoreCommandRouter.prototype.setMyVolumioToken = function (data) {
+    var self=this;
+    var defer = libQ.defer();
+
+    var response = self.executeOnPlugin('system_controller', 'my_volumio', 'setMyVolumioToken', data);
+
+    if (response != undefined) {
+        response.then(function (result) {
+            defer.resolve(result);
+        })
+            .fail(function () {
+
+                defer.resolve('');
+            });
+    }
+
+    return defer.promise;
+}
+
+CoreCommandRouter.prototype.getMyVolumioStatus = function () {
+    var self=this;
+    var defer = libQ.defer();
+
+    var response = self.executeOnPlugin('system_controller', 'my_volumio', 'getMyVolumioStatus', '');
+
+    if (response != undefined) {
+        response.then(function (result) {
+            defer.resolve(result);
+        })
+            .fail(function () {
+                var jsonobject = {"loggedIn":false}
+                defer.resolve(jsonobject);
+            });
+    }
+
+    return defer.promise;
+}
+
+CoreCommandRouter.prototype.myVolumioLogout = function () {
+    var self=this;
+    var defer = libQ.defer();
+
+    return self.executeOnPlugin('system_controller', 'my_volumio', 'myVolumioLogout', '');
+}
+
+CoreCommandRouter.prototype.enableMyVolumioDevice = function (device) {
+    var self=this;
+    var defer = libQ.defer();
+
+    return self.executeOnPlugin('system_controller', 'my_volumio', 'enableMyVolumioDevice', device);
+}
+
+CoreCommandRouter.prototype.disableMyVolumioDevice = function (device) {
+    var self=this;
+    var defer = libQ.defer();
+
+    return self.executeOnPlugin('system_controller', 'my_volumio', 'disableMyVolumioDevice', device);
+}
+
+CoreCommandRouter.prototype.deleteMyVolumioDevice = function (device) {
+    var self=this;
+    var defer = libQ.defer();
+
+    return self.executeOnPlugin('system_controller', 'my_volumio', 'deleteMyVolumioDevice', device);
+}
+
