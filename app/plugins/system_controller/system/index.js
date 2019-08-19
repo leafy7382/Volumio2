@@ -8,6 +8,7 @@ var exec = require('child_process').exec;
 var spawn = require('child_process').spawn;
 var crypto = require('crypto');
 var calltrials = 0;
+var additionalSVInfo;
 
 // Define the ControllerSystem class
 module.exports = ControllerSystem;
@@ -44,6 +45,8 @@ ControllerSystem.prototype.onVolumioStart = function () {
     this.commandRouter.sharedVars.addConfigValue('system.uuid', 'string', uuid);
 	this.commandRouter.sharedVars.addConfigValue('system.name', 'string', self.config.get('playerName'));
 
+    process.env.ADVANCED_SETTINGS_MODE = this.config.get('advanced_settings_mode', true);
+
 	self.deviceDetect();
 	self.callHome();
 
@@ -79,18 +82,24 @@ ControllerSystem.prototype.getUIConfig = function () {
     var device = self.config.get('device', '');
     var showDiskInstaller = self.config.get('show_disk_installer', true);
 	var HDMIEnabled = self.config.get('hdmi_enabled', false);
-
 	self.commandRouter.i18nJson(__dirname+'/../../../i18n/strings_'+lang_code+'.json',
 		__dirname+'/../../../i18n/strings_en.json',
 		__dirname + '/UIConfig.json')
 		.then(function(uiconf)
 		{
-    self.configManager.setUIConfigParam(uiconf,'sections[0].content[0].value',self.config.get('playerName').capitalize());
+    self.configManager.setUIConfigParam(uiconf,'sections[0].content[0].value',self.config.get('playerName'));
     self.configManager.setUIConfigParam(uiconf,'sections[0].content[1].value',self.config.get('startupSound'));
+    var advancedSettingsStatus = self.getAdvancedSettingsStatus();
+    self.configManager.setUIConfigParam(uiconf,'sections[0].content[3].value.value', advancedSettingsStatus);
+    self.configManager.setUIConfigParam(uiconf, 'sections[0].content[3].value.label', self.getLabelForSelect(self.configManager.getValue(uiconf, 'sections[0].content[3].options'), advancedSettingsStatus));
+    if (process.env.SHOW_ADVANCED_SETTINGS_MODE_SELECTOR === 'true') {
+        self.configManager.setUIConfigParam(uiconf,'sections[0].content[3].hidden', false);
+	}
+
     self.configManager.setUIConfigParam(uiconf,'sections[1].content[0].value', HDMIEnabled);
 
 
-	if (device != undefined && device.length > 0 && device === 'x86' && showDiskInstaller) {
+	if (device != undefined && device.length > 0 && (device === 'Tinkerboard' || device === 'x86') && showDiskInstaller) {
 		var disks = self.getDisks();
         if (disks != undefined) {
             disks.then(function (result) {
@@ -146,8 +155,8 @@ ControllerSystem.prototype.getUIConfig = function () {
 
 
 		})
-		.fail(function()
-		{
+		.fail(function(error)
+		{   self.logger.info(error);
 			defer.reject(new Error());
 		})
 
@@ -227,25 +236,34 @@ ControllerSystem.prototype.saveGeneralSettings = function (data) {
 
     var defer = libQ.defer();
 
-    var player_name = data['player_name'];
-    var hostname = data['player_name'].split(" ").join("-");
     if (data['startup_sound'] != undefined) {
         self.config.set('startupSound', data['startup_sound']);
+    }
+
+    if (data['advanced_settings'] !== undefined && data['advanced_settings'].value !== undefined) {
+        self.config.set('advanced_settings_mode', data['advanced_settings'].value);
+        process.env.ADVANCED_SETTINGS_MODE = data['advanced_settings'].value;
+    }
+
+    var oldPlayerName = self.config.get('playerName');
+    var player_name = data['player_name'];
+    if (player_name !== oldPlayerName) {
+        var hostname = data['player_name'].split(" ").join("-");
+        self.config.set('playerName', player_name);
+        self.commandRouter.pushToastMessage('success', self.commandRouter.getI18nString('SYSTEM.SYSTEM_CONFIGURATION_UPDATE'), self.commandRouter.getI18nString('SYSTEM.SYSTEM_CONFIGURATION_UPDATE_SUCCESS'));
+        self.setHostname(player_name);
+        self.commandRouter.sharedVars.set('system.name', player_name);
+        defer.resolve({});
+
+        for (var i in self.callbacks) {
+            var callback = self.callbacks[i];
+
+            callback.call(callback, player_name);
+        }
+	} else {
+        defer.resolve({});
 	}
 
-    self.config.set('playerName', player_name);
-
-
-	self.commandRouter.pushToastMessage('success', self.commandRouter.getI18nString('SYSTEM.SYSTEM_CONFIGURATION_UPDATE'), self.commandRouter.getI18nString('SYSTEM.SYSTEM_CONFIGURATION_UPDATE_SUCCESS'));
-	self.setHostname(player_name);
-	self.commandRouter.sharedVars.set('system.name', player_name);
-	defer.resolve({});
-
-    for (var i in self.callbacks) {
-        var callback = self.callbacks[i];
-
-        callback.call(callback, player_name);
-    }
     return defer.promise;
 };
 
@@ -296,7 +314,7 @@ ControllerSystem.prototype.setHostname = function (hostname) {
 
 				} else {
 					self.logger.info('Permissions for /etc/hosts set')
-					exec("/usr/bin/sudo /bin/hostname "+hostname, {uid: 1000, gid: 1000}, function (error, stdout, stderr) {
+					exec("/usr/bin/sudo /bin/hostname "+ newhostname, {uid: 1000, gid: 1000}, function (error, stdout, stderr) {
 						if (error !== null) {
 							console.log('Cannot set new hostname: ' + error);
 
@@ -325,46 +343,16 @@ ControllerSystem.prototype.setHostname = function (hostname) {
 									if (err) {
 										console.log(err);
 									} else {
-										self.logger.info('Avahi name changed to '+ hostname);
-										/*
-										setTimeout(function () {
-											exec("/usr/bin/sudo /bin/systemctl restart avahi-daemon.service", {
-												uid: 1000,
-												gid: 1000
-											}, function (error, stdout, stderr) {
-												if (error !== null) {
-													console.log(error);
-													self.commandRouter.pushToastMessage('alert', self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME'), self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME_ERROR'));
-												} else {
-													self.logger.info('Avahi Daemon Restarted')
-												}
-											});
-										}, 3000)
-										 */
+										self.logger.info('Avahi name changed to '+ newhostname);
 									}
 								});
 							}
 
 						});
-
-
-
-
-
-
 						setTimeout(function () {
-							exec("/usr/bin/sudo /bin/systemctl restart avahi-daemon.service", {
-								uid: 1000,
-								gid: 1000
-							}, function (error, stdout, stderr) {
-								if (error !== null) {
-									console.log(error);
-									self.commandRouter.pushToastMessage('alert', self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME'), self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME_ERROR'));
-								} else {
-									self.logger.info('Avahi Daemon Restarted')
-								}
-							});
-						}, 3000)
+							// Restarting AVAHI results in system crashing
+							//self.restartAvahi();
+						}, 10000)
 					}
 				});
 			});
@@ -374,6 +362,21 @@ ControllerSystem.prototype.setHostname = function (hostname) {
 
 };
 
+ControllerSystem.prototype.restartAvahi = function () {
+    var self = this;
+
+    exec("/usr/bin/sudo /bin/systemctl restart avahi-daemon.service", {
+        uid: 1000,
+        gid: 1000
+    }, function (error, stdout, stderr) {
+        if (error !== null) {
+            console.log(error);
+            self.commandRouter.pushToastMessage('alert', self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME'), self.commandRouter.getI18nString('SYSTEM.SYSTEM_NAME_ERROR'));
+        } else {
+            self.logger.info('Avahi Daemon Restarted')
+        }
+    });
+};
 
 
 
@@ -413,10 +416,13 @@ ControllerSystem.prototype.getSystemVersion = function () {
 			str = file[l].split('=');
 			releaseinfo.hardware = str[1].replace(/\"/gi, "");
 		}
-
 	}
-	defer.resolve(releaseinfo);
 
+	if (additionalSVInfo) {
+        releaseinfo.additionalSVInfo = additionalSVInfo;
+	}
+
+	defer.resolve(releaseinfo);
 
 	return defer.promise;
 };
@@ -453,7 +459,6 @@ ControllerSystem.prototype.sendBugReport = function (message) {
 	if (message == undefined || message.text == undefined || message.text.length < 1 ) {
 		message.text = 'No info available';
 	}
-	fs.appendFileSync('/tmp/logfields', 'Description="' + message.text + '"\r\n');
 	// Must single-quote the message or the shell may interpret it and crash.
 	// single-quotes already within the message need to be escaped.
 	// The resulting string always starts and ends with single quotes.
@@ -516,7 +521,6 @@ ControllerSystem.prototype.deviceDetect = function (data) {
 	var defer = libQ.defer();
 	var device = '';
 
-    var info = self.getSystemVersion();
     var info = self.getSystemVersion();
     info.then(function(infos)
     {
@@ -655,10 +659,14 @@ ControllerSystem.prototype.getDisks = function () {
 	var disks = disksraw.split("\n");
 
 
+    if (currentdisk === 'mmcblkp') {
+        currentdiskRaw = execSync('/bin/mount | head -n 1 | cut -d " " -f 1 | cut -d "/" -f 3 | cut -d "p" -f 1', { uid: 1000, gid: 1000, encoding: 'utf8'});
+		currentdisk = currentdiskRaw.replace(/\n/,'');
+    }
 
 	for (var i = 0; i < disks.length; i++) {
 
-		if ((disks[i].indexOf(currentdisk) >= 0) || (disks[i].indexOf('loop') >= 0)) {
+		if ((disks[i].indexOf(currentdisk) >= 0) || (disks[i].indexOf('loop') >= 0) || (disks[i].indexOf('rpmb') >= 0) || (disks[i].indexOf('boot') >= 0)) {
 
 		} else {
 			var disksarray = disks[i].split(' ');
@@ -676,9 +684,11 @@ ControllerSystem.prototype.getDisks = function () {
 				if (disksarray[a].indexOf('MODEL') >= 0) {
 					diskinfo.name = disksarray[a].replace('MODEL=', '').replace(/"/g, '');
 				}
+				if (diskinfo.device.indexOf('mmcblk') >= 0) {
+				   diskinfo.name = 'eMMC/SD';
+				}
 
-				if (count === 4) {
-
+				if (count === 3) {
 					if ( diskinfo.device && diskinfo.size) {
 						availablearray.push(diskinfo);
 						diskinfo = {'device': '', 'name': '', 'size': ''};
@@ -785,9 +795,9 @@ ControllerSystem.prototype.installToDisk = function (data) {
     	var target = '/dev/' + data.target;
 	}
     self.notifyInstallToDiskStatus({'progress': 0, 'status':'started'});
-    var ddsizeRaw = execSync("/bin/lsblk -b | grep " + data.from + " | awk '{print $4}' | head -n1", { uid: 1000, gid: 1000, encoding: 'utf8'});
+    var ddsizeRaw = execSync("/bin/lsblk -b | grep -w " + data.from + " | awk '{print $4}' | head -n1", { uid: 1000, gid: 1000, encoding: 'utf8'});
     ddsize = Math.ceil(ddsizeRaw/1024/1024);
-    var ddsizeRawDest = execSync("/bin/lsblk -b | grep " + data.target + " | awk '{print $4}' | head -n1", { uid: 1000, gid: 1000, encoding: 'utf8'});
+    var ddsizeRawDest = execSync("/bin/lsblk -b | grep -w " + data.target + " | awk '{print $4}' | head -n1", { uid: 1000, gid: 1000, encoding: 'utf8'});
 
     if (Number(ddsizeRaw) > Number(ddsizeRawDest)) {
         error = true;
@@ -828,8 +838,11 @@ ControllerSystem.prototype.installToDisk = function (data) {
                     fs.unlinkSync('/tmp/boot');
                     fs.unlinkSync('/tmp/imgpart');
                 } catch(e) {}
-
+                //TODO: remove resize sentinel once initrd for arm devices have been aligned with x86
                 try {
+                    if (target === '/dev/mmcblk0' || target === '/dev/mmcblk1') {
+                        target = target + 'p';
+                    }
                     execSync('mkdir /tmp/boot', { uid: 1000, gid: 1000, encoding: 'utf8'});
                     execSync('/usr/bin/sudo /bin/mount ' + target + '1 /tmp/boot -o rw,uid=1000,gid=1000', { uid: 1000, gid: 1000, encoding: 'utf8'});
                     execSync('/bin/touch /tmp/boot/resize-volumio-datapart', { uid: 1000, gid: 1000, encoding: 'utf8'});
@@ -843,19 +856,6 @@ ControllerSystem.prototype.installToDisk = function (data) {
                     self.notifyInstallToDiskStatus({'progress':0, 'status':'error', 'error': 'Cannot prepare system for resize'});
                 }
 
-                try {
-                    execSync('mkdir /tmp/imgpart', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    execSync('/usr/bin/sudo /bin/mount ' + target + '2 /tmp/imgpart', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    execSync('/bin/touch /tmp/imgpart/move-gpt', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    execSync('/bin/sync', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    execSync('/usr/bin/sudo /bin/umount ' + target + '2', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    execSync('rm -rf /tmp/imgpart', { uid: 1000, gid: 1000, encoding: 'utf8'});
-                    self.logger.info('Successfully prepared system for GPT');
-                } catch (e) {
-                    self.logger.error('Cannot prepare system for GPT');
-                    self.notifyInstallToDiskStatus({'progress':0, 'status':'error', 'error': 'Cannot prepare system for GPT'});
-                    error = true;
-                }
                 if (!error) {
                     self.notifyInstallToDiskStatus({'progress':100, 'status':'done'});
                 }
@@ -919,10 +919,9 @@ ControllerSystem.prototype.notifyInstallToDiskStatus = function (data) {
 
 ControllerSystem.prototype.saveHDMISettings = function (data) {
     var self = this;
-    console.log(JSON.stringify(data))
-	var currentConf = self.config.get('hdmi_enabled', false);
 
-    if (currentConf |=  data['hdmi_enabled'])  {
+	var currentConf = self.config.get('hdmi_enabled', false);
+	if (currentConf |=  data['hdmi_enabled'])  {
         self.config.set('hdmi_enabled', data['hdmi_enabled']);
 
         var action = 'enable';
@@ -943,3 +942,102 @@ ControllerSystem.prototype.saveHDMISettings = function (data) {
         });
 	}
 }
+
+ControllerSystem.prototype.versionChangeDetect = function () {
+    var self = this;
+
+    var info = self.getSystemVersion();
+    info.then(function(infos)
+    {
+        if (infos != undefined && infos.systemversion != undefined) {
+        	var systemVersion = self.config.get('system_version', 'none');
+        	if (systemVersion !== infos.systemversion) {
+        		self.config.set('system_version', infos.systemversion);
+        		self.logger.info('Version has changed, forcing UI Reload');
+        		return self.commandRouter.reloadUi();
+			}
+        }
+    });
+};
+
+ControllerSystem.prototype.getMainDiskUsage = function () {
+    var self = this;
+    var defer = libQ.defer();
+    var unity = ' MB';
+    var mainDiskUsageObj = {'size':'','used':'','free':'','usedPercentage':'','freePercentage':''};
+
+    exec("/bin/df -h -m | grep overlay", {uid: 1000, gid: 1000}, function (error, stdout, stderr) {
+        if (error !== null) {
+            defer.reject({'error':error})
+        } else {
+        	try {
+                var mainDiskArray = stdout.toString().split(' ').filter(item => item.trim() !== '');
+                mainDiskUsageObj.size = mainDiskArray[1] + unity;
+                mainDiskUsageObj.used = mainDiskArray[2] + unity;
+                mainDiskUsageObj.free = mainDiskArray[3] + unity;
+                mainDiskUsageObj.usedPercentage = parseInt(mainDiskArray[4].replace('%', ''));
+                mainDiskUsageObj.freePercentage = 100 - mainDiskUsageObj.usedPercentage;
+                defer.resolve(mainDiskUsageObj);
+			} catch(e) {
+        		self.logger.error('Error in parsing main disk data: ' + e);
+                defer.reject({'error':error})
+			}
+        }
+    });
+    return defer.promise
+};
+
+ControllerSystem.prototype.setAdditionalSVInfo = function (data) {
+    var self = this;
+	self.logger.info('Setting Additional System Software info: ' + data);
+    additionalSVInfo = data;
+};
+
+ControllerSystem.prototype.getAdvancedSettingsStatus = function () {
+    var self = this;
+    if (process.env.ADVANCED_SETTINGS_MODE === 'true') {
+    	return true
+	} else {
+    	return false
+	}
+};
+
+ControllerSystem.prototype.getExperienceAdvancedSettings = function () {
+    var self = this;
+
+    var simpleSettingsString = self.commandRouter.getI18nString('SYSTEM.SIMPLE_SETTINGS_SET_EXTENDED');
+    var fullSettingsString = self.commandRouter.getI18nString('SYSTEM.FULL_SETTINGS_SET_EXTENDED');
+    var advancedSettingsStatus = self.getAdvancedSettingsStatus();
+    var advancedSettingsStatusObject = {id: false, label: simpleSettingsString};
+    if (advancedSettingsStatus) {
+        advancedSettingsStatusObject = {id: true, label: fullSettingsString}
+    }
+    var responseObject = {
+        "options": [{id: false, label: simpleSettingsString}, {id: true, label: fullSettingsString}],
+        "status": advancedSettingsStatusObject
+    }
+
+    return responseObject
+};
+
+ControllerSystem.prototype.setExperienceAdvancedSettings = function (data) {
+    var self = this;
+
+    self.logger.info('Saving Experience Advanced Settings');
+    if (data !== undefined) {
+        self.config.set('advanced_settings_mode', data);
+        process.env.ADVANCED_SETTINGS_MODE = data;
+    }
+};
+
+ControllerSystem.prototype.getLabelForSelect = function (options, key) {
+    var self=this;
+
+    var n = options.length;
+    for (var i = 0; i < n; i++) {
+        if (options[i].value == key)
+            return options[i].label;
+    }
+
+    return 'Error';
+};

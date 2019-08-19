@@ -91,10 +91,12 @@ CorePlayQueue.prototype.removeQueueItem = function (nIndex) {
     //this.commandRouter.logger.info(JSON.stringify(item));
     this.saveQueue();
 
+    var name = '';
+    if (item[0] && item[0].name) {
+        name = item[0].name;
+    }
     this.commandRouter.pushToastMessage('success',  this.commandRouter.getI18nString('COMMON.REMOVE_QUEUE_TITLE'),
-        this.commandRouter.getI18nString('COMMON.REMOVE_QUEUE_TEXT_1')+
-        item[0].name+
-        this.commandRouter.getI18nString('COMMON.REMOVE_QUEUE_TEXT_2'));
+        this.commandRouter.getI18nString('COMMON.REMOVE_QUEUE_TEXT_1')+ name + this.commandRouter.getI18nString('COMMON.REMOVE_QUEUE_TEXT_2'));
 
     var defer=libQ.defer();
     this.commandRouter.volumioPushQueue(this.arrayQueue)
@@ -138,15 +140,18 @@ CorePlayQueue.prototype.addQueueItems = function (arrayItems) {
         {
             service=item.service;
 
-            if(service==='webradio' || item.uri.startsWith('cdda:'))
+            if( item.uri.startsWith('cdda:'))
             {
                 item.name=item.title;
                 if (!item.albumart) {
                     item.albumart="/albumart";
                 }
                 promiseArray.push(libQ.resolve(item));
+            } else if (service==='webradio') {
+                promiseArray.push(this.commandRouter.executeOnPlugin('music_service', 'webradio', 'explodeUri', item));
+            } else  {
+                promiseArray.push(this.commandRouter.explodeUriFromService(service,item.uri));
             }
-            else  promiseArray.push(this.commandRouter.explodeUriFromService(service,item.uri));
         } else {
 
             //backward compatibility with SPOP plugin
@@ -247,7 +252,7 @@ CorePlayQueue.prototype.saveQueue = function () {
     var self=this;
     this.commandRouter.pushConsoleMessage('CorePlayQueue::saveQueue');
 
-    fs.writeJson('/data/queue', self.arrayQueue, function (err) {
+    fs.writeJson('/data/queue', self.arrayQueue, {spaces: 2}, function (err) {
         if(err)
             self.commandRouter.logger.info("An error occurred saving queue to disk: "+err);
     });

@@ -11,6 +11,8 @@ const Entities = require('html-entities').XmlEntities;
 
 const entities = new Entities();
 
+var debug = false;
+
 
 // function to build the xml required for the saop request to the DLNA server
 const buildRequestXml = function(id, options) {
@@ -83,21 +85,22 @@ var browseServer = function(id, controlUrl, options, callback) {
     });
 
     response.on('err', function(err) {
-      console.log(callback(err));
+      log(callback(err));
     });
 
     response.on('end', function() {
       var browseResult = new Object;
       xmltojs.parseString(entities.decode(data), {tagNameProcessors: [stripPrefix], explicitArray: true, explicitCharkey: true}, function(err, result) {
         if (err) {
-          console.log(err);
+          log(err);
           // bailout on error
           callback(err);
           return;
         }
 
         // validate result included the expected entries
-        if ((result['Envelope']) &&
+        if ((result != undefined) &&
+            (result['Envelope']) &&
             (result['Envelope']['Body']) &&
             (result['Envelope']['Body'][0]) &&
             (result['Envelope']['Body'][0]['BrowseResponse']) &&
@@ -133,7 +136,12 @@ var browseServer = function(id, controlUrl, options, callback) {
               return;
             }
         } else {
-          callback(new Error('Did not get expected response from server:' + JSON.stringify(result)));
+          if (result != undefined) {
+              callback(new Error('Did not get expected response from server:' + JSON.stringify(result)));
+          } else {
+              callback(new Error('Did not get any response from server:'));
+          }
+
           return;
         }
       });
@@ -160,6 +168,9 @@ function parseContainer(metadata){
         if(metadata.title){
           container.title = metadata.title[0]["_"];
         }
+        if(metadata.artist){
+            container.artist = metadata.artist[0]["_"];
+        }
         if(metadata.class){
           container.class = metadata.class[0]["_"];
         }
@@ -176,7 +187,7 @@ function parseContainer(metadata){
         }
     }
   }catch(e){
-    console.err(e);
+      log(e);
   }
   return container;
 }
@@ -228,5 +239,10 @@ function parseItem(metadata){
   return item;
 }
 
+function log(message) {
+  if (debug) {
+    console.log(message)
+  }
+}
 
 module.exports = browseServer;

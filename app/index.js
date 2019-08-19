@@ -37,6 +37,7 @@ function CoreCommandRouter(server) {
 	});
 
 	this.callbacks = [];
+	this.pluginsRestEndpoints = [];
 	this.sharedVars = new vconf();
     this.sharedVars.registerCallback('language_code',this.loadI18nStrings.bind(this));
     this.sharedVars.addConfigValue('selective_search','boolean',true);
@@ -58,8 +59,6 @@ function CoreCommandRouter(server) {
     this.pluginManager.pluginFolderCleanup();
     this.configManager=new(require(__dirname+'/configManager.js'))(this.logger);
 
-
-    this.pluginManager.loadPlugins();
     this.pluginManager.startPlugins();
 
     this.loadI18nStrings();
@@ -82,9 +81,7 @@ function CoreCommandRouter(server) {
     this.pushConsoleMessage('BOOT COMPLETED');
 
     this.startupSound();
-
-
-    	this.closeModals();
+	this.closeModals();
 
 }
 
@@ -158,7 +155,7 @@ CoreCommandRouter.prototype.volumioupdatevolume = function (vol) {
 };
 
 // Volumio Retrieve Volume
-CoreCommandRouter.prototype.volumioretrievevolume = function (vol) {
+CoreCommandRouter.prototype.volumioretrievevolume = function () {
 	this.pushConsoleMessage('CoreCommandRouter::volumioRetrievevolume');
 	return this.volumeControl.retrievevolume();
 };
@@ -175,6 +172,18 @@ CoreCommandRouter.prototype.updateVolumeScripts = function (data) {
     this.pushConsoleMessage('CoreCommandRouter::volumioUpdateVolumeScripts');
     if (this.volumeControl){
         return this.volumeControl.updateVolumeScript(data);
+    }
+};
+
+CoreCommandRouter.prototype.retrieveVolumeLevels = function () {
+    this.pushConsoleMessage('CoreCommandRouter::volumioRetrieveVolumeLevels');
+    return this.stateMachine.getcurrentVolume();
+};
+
+CoreCommandRouter.prototype.setStartupVolume = function () {
+    this.pushConsoleMessage('CoreCommandRouter::volumiosetStartupVolume');
+    if (this.volumeControl){
+        return this.volumeControl.setStartupVolume();
     }
 };
 
@@ -210,25 +219,8 @@ CoreCommandRouter.prototype.volumioAddQueueUids = function (arrayUids) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioAddQueueUids');
 	return this.musicLibrary.addQueueUids(arrayUids);
 };
-/*
 
- TODO: This should become the default entry point for adding music to any service
- // Volumio Add Queue Uri
- CoreCommandRouter.prototype.volumioAddQueueUri = function(data) {
- var self = this;
- self.pushConsoleMessage( 'CoreCommandRouter::volumioAddQueueUri');
- var service = data.service;
- var uri = data.uri;
- return self.executeOnPlugin('music_service', 'mpd', 'add', uri);
- }
- */
-// Volumio Rebuild Library
-CoreCommandRouter.prototype.volumioRebuildLibrary = function () {
-	this.pushConsoleMessage('CoreCommandRouter::volumioRebuildLibrary');
-	return this.musicLibrary.buildLibrary();
-};
-
-// Volumio Get Library Index
+// TODO CLEANUP THIS FUNCTION
 CoreCommandRouter.prototype.volumioGetLibraryFilters = function (sUid) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioGetLibraryFilters');
 	return this.musicLibrary.getIndex(sUid);
@@ -246,6 +238,11 @@ CoreCommandRouter.prototype.volumioGetBrowseSources = function () {
 	return this.musicLibrary.getBrowseSources();
 };
 
+CoreCommandRouter.prototype.volumioGetVisibleBrowseSources = function () {
+    this.pushConsoleMessage('CoreCommandRouter::volumioGetVisibleSources');
+    return this.musicLibrary.getVisibleBrowseSources();
+};
+
 CoreCommandRouter.prototype.volumioAddToBrowseSources = function (data) {
 	this.pushConsoleMessage('CoreCommandRouter::volumioAddToBrowseSources' + data);
 	return this.musicLibrary.addToBrowseSources(data);
@@ -257,7 +254,7 @@ CoreCommandRouter.prototype.volumioRemoveToBrowseSources = function (data) {
 };
 
 CoreCommandRouter.prototype.volumioUpdateToBrowseSources = function (name,data) {
-	this.pushConsoleMessage('CoreCommandRouter::volumioUpdateToBrowseSources' + data);
+	this.pushConsoleMessage('CoreCommandRouter::volumioUpdateToBrowseSources');
 	return this.musicLibrary.updateBrowseSources(name,data);
 };
 
@@ -341,49 +338,84 @@ CoreCommandRouter.prototype.volumioPushQueue = function (queue) {
 	);
 };
 
-// MPD Clear-Add-Play
+// Clear-Add-Play
 CoreCommandRouter.prototype.serviceClearAddPlayTracks = function (arrayTrackIds, sService) {
 	this.pushConsoleMessage('CoreCommandRouter::serviceClearAddPlayTracks');
-	var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
-	return thisPlugin.clearAddPlayTracks(arrayTrackIds);
+    if (sService != undefined) {
+        var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
+
+        if (thisPlugin != undefined && typeof thisPlugin.clearAddPlayTracks === "function") {
+            return thisPlugin.clearAddPlayTracks(arrayTrackIds);
+        } else {
+            this.logger.error('WARNING: No clearAddPlayTracks method for service ' + sService);
+        }
+    }
 };
 
 // MPD Stop
 CoreCommandRouter.prototype.serviceStop = function (sService) {
-	this.pushConsoleMessage('CoreCommandRouter::serviceStop');
-	var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
-	return thisPlugin.stop();
+
+    if (sService != undefined) {
+        this.pushConsoleMessage('CoreCommandRouter::serviceStop');
+        var thisPlugin = this.getMusicPlugin(sService);
+        if (thisPlugin != undefined && typeof thisPlugin.stop === "function") {
+            return thisPlugin.stop();
+        } else {
+            this.logger.error('WARNING: No stop method for service ' + sService);
+        }
+
+    } else {
+        this.pushConsoleMessage('Received STOP, but no service to execute it');
+        return libQ.resolve('');
+    }
 };
 
 // MPD Pause
 CoreCommandRouter.prototype.servicePause = function (sService) {
-	this.pushConsoleMessage('CoreCommandRouter::servicePause');
+    this.pushConsoleMessage('CoreCommandRouter::servicePause');
 
-	var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
-	return thisPlugin.pause();
+    var thisPlugin = this.getMusicPlugin(sService);
+    if (thisPlugin != undefined && typeof thisPlugin.pause === "function") {
+        return thisPlugin.pause();
+    } else {
+        this.logger.error('WARNING: No pause method for service ' + sService);
+    }
 };
 
 // MPD Resume
 CoreCommandRouter.prototype.serviceResume = function (sService) {
-	this.pushConsoleMessage('CoreCommandRouter::serviceResume');
+    this.pushConsoleMessage('CoreCommandRouter::serviceResume');
 
-	var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
+    var thisPlugin = this.getMusicPlugin(sService);
+    var state=this.stateMachine.getState();
 
-	var state=this.stateMachine.getState();
-
-	if(state==='stop')
-	{
-		thisPlugin.clearAddPlayTracks();
-	}
-
-	return thisPlugin.resume();
+    if(state==='stop')
+    {
+        if (thisPlugin != undefined && typeof thisPlugin.clearAddPlayTracks === "function") {
+            thisPlugin.clearAddPlayTracks();
+        }
+    }
+    if (thisPlugin != undefined && typeof thisPlugin.resume === "function") {
+        return thisPlugin.resume();
+    }
 };
 
 // Methods usually called by the service controllers --------------------------------------------------------------
 
 CoreCommandRouter.prototype.servicePushState = function (state, sService) {
-	this.pushConsoleMessage('CoreCommandRouter::servicePushState');
-	return this.stateMachine.syncState(state, sService);
+    this.pushConsoleMessage('CoreCommandRouter::servicePushState');
+    return this.stateMachine.syncState(state, sService);
+};
+
+CoreCommandRouter.prototype.getMusicPlugin = function (sService) {
+    // Check first if its a music service
+    var thisPlugin = this.pluginManager.getPlugin('music_service', sService);
+    if (!thisPlugin) {
+        // check if its a audio interface
+        thisPlugin = this.pluginManager.getPlugin('audio_interface', sService);
+    }
+
+    return thisPlugin
 };
 
 // Methods usually called by the music library ---------------------------------------------------------------------
@@ -409,16 +441,41 @@ CoreCommandRouter.prototype.addQueueItems = function (arrayItems) {
 
 	return this.stateMachine.addQueueItems(arrayItems);
 };
-CoreCommandRouter.prototype.replaceAndPlay = function (arrayItems) {
+CoreCommandRouter.prototype.replaceAndPlay = function (data) {
+	var defer = libQ.defer();
 	this.pushConsoleMessage('CoreCommandRouter::volumioReplaceandPlayItems');
 
 	this.stateMachine.clearQueue();
 
-    if (arrayItems.uri != undefined && arrayItems.uri.indexOf('playlists/') >= 0) {
-        return this.playPlaylist(arrayItems.title)
-    } else  {
-        return this.stateMachine.addQueueItems(arrayItems);
-    }
+    if (data.uri != undefined) {
+    	if (data.uri.indexOf('playlists/') >= 0) {
+            this.playPlaylist(data.title);
+            defer.resolve();
+		} else {
+            this.stateMachine.addQueueItems(data)
+                .then((e)=> {
+                	this.volumioPlay(e.firstItemIndex);
+            		defer.resolve();
+        	});
+		}
+    } else if (data.list && data.index) {
+        this.stateMachine.addQueueItems(data.list)
+            .then(()=>{
+                this.volumioPlay(data.index);
+        		defer.resolve();
+            });
+    } else if ((!(data.list && data.index) && data.item && data.item.uri)) {
+        this.stateMachine.addQueueItems(data.item)
+            .then((e)=>{
+                this.volumioPlay(e.firstItemIndex);
+        		defer.resolve();
+            });
+    } else {
+    	self.logger.error('Could not Replace and Play Item');
+        defer.reject('Could not Replace and Play Item');
+	}
+
+	return defer.promise;
 };
 
 CoreCommandRouter.prototype.replaceAndPlayCue = function (arrayItems) {
@@ -1152,6 +1209,11 @@ CoreCommandRouter.prototype.broadcastMessage = function (msg, value) {
 
 CoreCommandRouter.prototype.pushMultiroomDevices = function (data) {
 	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'multiroom');
+    if (audioOutputPlugin != undefined && typeof audioOutputPlugin.pushOutputsState === "function") {
+        audioOutputPlugin.pushOutputsState(data);
+    }
 	return libQ.all(
 		libFast.map(this.pluginManager.getPluginNames('user_interface'), function (sInterface) {
 			var thisInterface = self.pluginManager.getPlugin('user_interface', sInterface);
@@ -1169,6 +1231,7 @@ CoreCommandRouter.prototype.pushMultiroom = function (data) {
 			if (typeof thisInterface.pushMultiroom === "function")
 				return thisInterface.pushMultiroom(data);
 		})
+
 	);
 };
 
@@ -1268,6 +1331,13 @@ CoreCommandRouter.prototype.volumioPlay = function (N) {
 	{
 		return this.stateMachine.play(N);
 	}
+};
+
+// Volumio Play
+CoreCommandRouter.prototype.volumioVolatilePlay = function () {
+    this.pushConsoleMessage('CoreCommandRouter::volumioVolatilePlay');
+
+    return this.stateMachine.volatilePlay();
 };
 
 // Volumio Toggle
@@ -1495,8 +1565,17 @@ CoreCommandRouter.prototype.volumioFFWDRew = function (millisecs) {
     return this.stateMachine.ffwdRew(millisecs);
 };
 
+CoreCommandRouter.prototype.volumioSkipBackwards = function (data) {
+    this.pushConsoleMessage('CoreCommandRouter::volumioSkipBackwards');
 
+    return this.stateMachine.skipBackwards(data);
+};
 
+CoreCommandRouter.prototype.volumioSkipForward = function (data) {
+    this.pushConsoleMessage('CoreCommandRouter::volumioSkipForward');
+
+    return this.stateMachine.skipForward(data);
+};
 
 
 CoreCommandRouter.prototype.volumioSaveQueueToPlaylist = function (name) {
@@ -1519,37 +1598,57 @@ CoreCommandRouter.prototype.volumioSaveQueueToPlaylist = function (name) {
 
 
 CoreCommandRouter.prototype.volumioMoveQueue = function (from,to) {
+	var defer = libQ.defer();
 	this.pushConsoleMessage('CoreCommandRouter::volumioMoveQueue');
 
-	return this.stateMachine.moveQueueItem(from,to);
+	if (from && to) {
+        return this.stateMachine.moveQueueItem(from,to);
+	} else {
+		this.logger.error('Cannot move item in queue, from or to parameter missing');
+        var queueArray=this.stateMachine.getQueue();
+        defer.resolve(queueArray);
+        return defer.promise
+	}
+
 };
 
 CoreCommandRouter.prototype.getI18nString = function (key) {
     var splitted=key.split('.');
 
-	if(splitted.length==1)
-    {
-        if(this.i18nStrings[key]!==undefined)
-            return this.i18nStrings[key];
-        else return this.i18nStringsDefaults[key];
-    }
-    else {
-        if(this.i18nStrings[splitted[0]]!==undefined &&
-           this.i18nStrings[splitted[0]][splitted[1]]!==undefined)
-            return this.i18nStrings[splitted[0]][splitted[1]];
-        else return this.i18nStringsDefaults[splitted[0]][splitted[1]];
-    }
+    if (this.i18nStrings) {
+        if(splitted.length==1)
+        {
+            if(this.i18nStrings[key]!==undefined)
+                return this.i18nStrings[key];
+            else return this.i18nStringsDefaults[key];
+        }
+        else {
+            if(this.i18nStrings[splitted[0]]!==undefined &&
+                this.i18nStrings[splitted[0]][splitted[1]]!==undefined)
+                return this.i18nStrings[splitted[0]][splitted[1]];
+            else return this.i18nStringsDefaults[splitted[0]][splitted[1]];
+        }
+	} else {
+    	var emptyString = '';
+    	return emptyString
+	}
+
 };
 
 CoreCommandRouter.prototype.loadI18nStrings = function () {
     var self=this;
     var language_code=this.sharedVars.get('language_code');
 
-    this.logger.info("Loading i18n strings for locale "+language_code);
-
-    this.i18nStrings=fs.readJsonSync(__dirname+'/i18n/strings_'+language_code+".json");
-    this.i18nStringsDefaults=fs.readJsonSync(__dirname+'/i18n/strings_en.json');
-
+	this.i18nStringsDefaults=fs.readJsonSync(__dirname+'/i18n/strings_en.json');
+	
+    try {
+        this.logger.info("Loading i18n strings for locale "+language_code);
+    	this.i18nStrings=fs.readJsonSync(__dirname+'/i18n/strings_'+language_code+".json");
+    } catch(e){
+        this.logger.error("Failed to load i18n strings for locale "+language_code + ": " +e);
+        this.i18nStrings = this.i18nStringsDefaults;
+    }
+    
     var categories=this.pluginManager.getPluginCategories();
     for(var i in categories)
     {
@@ -1560,9 +1659,22 @@ CoreCommandRouter.prototype.loadI18nStrings = function () {
             var name=names[j];
             var instance=this.pluginManager.getPlugin(category,name);
 
-            if(instance.loadI18NStrings)
-                instance.loadI18NStrings(language_code);
-
+            if (instance && instance.getI18nFile) {
+              var pluginI18NFile = instance.getI18nFile(language_code);
+              if (pluginI18NFile && fs.pathExistsSync(pluginI18NFile)) {
+                var pluginI18nStrings = fs.readJsonSync(pluginI18NFile);
+      
+                for (var locale in pluginI18nStrings) {
+                  // check if locale does not already exist to avoid that volumio
+                  // strings get overwritten
+                  if (!this.i18nStrings[locale]) {
+                    this.i18nStrings[locale] = pluginI18nStrings[locale];
+                  } else {
+                    this.logger.info("Plugin " + name + " has duplicated i18n key " + locale + ". It is ignored.");
+                  }
+                }
+              }
+            }
         }
     }
 };
@@ -1574,7 +1686,7 @@ CoreCommandRouter.prototype.i18nJson = function (dictionaryFile,defaultDictionar
 
 
 	try {
-		fs.statSync(dictionaryFile);
+		fs.readJsonSync(dictionaryFile);
 	} catch(e) {
 		dictionaryFile = defaultDictionaryFile;
 	}
@@ -1608,53 +1720,53 @@ CoreCommandRouter.prototype.i18nJson = function (dictionaryFile,defaultDictionar
 CoreCommandRouter.prototype.translateKeys = function (parent,dictionary,defaultDictionary) {
     var self=this;
 
-    var keys=Object.keys(parent);
+    try {
+        var keys=Object.keys(parent);
 
-    for(var i in keys)
-    {
-        var obj=parent[keys[i]];
-        var type=typeof(obj);
+        for(var i in keys)
+        {
+            var obj=parent[keys[i]];
+            var type=typeof(obj);
 
-        if(type==='object')
-        {
-           self.translateKeys(obj,dictionary,defaultDictionary);
-        }
-        else if(type==='string')
-        {
-            if(obj.startsWith("TRANSLATE."))
+            if(type==='object')
             {
-                var replaceKey=obj.slice(10);
-
-                var dotIndex=replaceKey.indexOf('.');
-
-                if(dotIndex==-1)
-                {
-                    var value=dictionary[replaceKey];
-                    if(value===undefined)
-                    {
-                        value=defaultDictionary[replaceKey];
-                    }
-                    parent[keys[i]]=value;
-                }
-                else {
-                    var category=replaceKey.slice(0,dotIndex);
-                    var key=replaceKey.slice(dotIndex+1);
-					
-                    if(dictionary[category]===undefined || dictionary[category][key]===undefined)
-                    {
-                        var value=defaultDictionary[category][key];
-                    } else {
-                        var value=dictionary[category][key];
-					}
-                    parent[keys[i]]=value;
-                }
-
-
-
+                self.translateKeys(obj,dictionary,defaultDictionary);
             }
+            else if(type==='string')
+            {
+                if(obj.startsWith("TRANSLATE."))
+                {
+                    var replaceKey=obj.slice(10);
 
+                    var dotIndex=replaceKey.indexOf('.');
+
+                    if(dotIndex==-1)
+                    {
+                        var value=dictionary[replaceKey];
+                        if(value===undefined)
+                        {
+                            value=defaultDictionary[replaceKey];
+                        }
+                        parent[keys[i]]=value;
+                    }
+                    else {
+                        var category=replaceKey.slice(0,dotIndex);
+                        var key=replaceKey.slice(dotIndex+1);
+
+                        if(dictionary[category]===undefined || dictionary[category][key]===undefined)
+                        {
+                            var value=defaultDictionary[category][key];
+                        } else {
+                            var value=dictionary[category][key];
+                        }
+                        parent[keys[i]]=value;
+                    }
+                }
+            }
         }
-    }
+	} catch(e) {
+    	self.logger.error('Cannot translate keys: ' + e);
+	}
 }
 
 CoreCommandRouter.prototype.overrideUIConfig = function (uiconfig, overrideFile) {
@@ -1892,3 +2004,215 @@ CoreCommandRouter.prototype.deleteMyVolumioDevice = function (device) {
     return self.executeOnPlugin('system_controller', 'my_volumio', 'deleteMyVolumioDevice', device);
 }
 
+CoreCommandRouter.prototype.reloadUi = function () {
+    var self=this;
+    this.pushConsoleMessage('CoreCommandRouter::Reload Ui');
+
+    return self.broadcastMessage('reloadUi', '');
+}
+
+CoreCommandRouter.prototype.getMenuItems = function () {
+    var self=this;
+    var defer = libQ.defer();
+    var lang_code = self.sharedVars.get('language_code');
+
+    self.i18nJson(__dirname+'/i18n/strings_'+lang_code+'.json',
+        __dirname+'/i18n/strings_en.json',
+        __dirname + '/mainmenu.json')
+        .then(function(menuItemsJson)
+        {
+            if (fs.existsSync('/myvolumio/')) {
+                var menuItems = [{"id": "my-volumio"}];
+                menuItems = menuItems.concat(menuItemsJson.menuItems);
+            } else {
+                var menuItems = menuItemsJson['menuItems'];
+            }
+            defer.resolve(menuItems);
+        });
+    return defer.promise
+}
+
+CoreCommandRouter.prototype.usbAudioAttach = function () {
+    var self=this;
+    var defer = libQ.defer();
+
+    if (typeof self.platformspecific.usbAudioAttach === "function") {
+        self.platformspecific.usbAudioAttach();
+    } else {
+        defer.resolve();
+	}
+    return defer.promise
+}
+
+CoreCommandRouter.prototype.usbAudioDetach = function () {
+    var self=this;
+    var defer = libQ.defer();
+
+    if (typeof self.platformspecific.usbAudioDetach === "function") {
+        self.platformspecific.usbAudioDetach();
+    } else {
+        defer.resolve();
+    }
+    return defer.promise
+}
+
+CoreCommandRouter.prototype.getMyMusicPlugins = function () {
+    var self=this;
+
+    return  this.pluginManager.getMyMusicPlugins();
+}
+
+CoreCommandRouter.prototype.enableDisableMyMusicPlugin = function (data) {
+    var self=this;
+
+    return  this.pluginManager.enableDisableMyMusicPlugin(data);
+}
+
+CoreCommandRouter.prototype.addPluginRestEndpoint = function (data) {
+    var self=this;
+    var updated = false;
+
+    if (data.endpoint && data.type && data.name && data.method) {
+        if (self.pluginsRestEndpoints.length) {
+            for (var i in self.pluginsRestEndpoints) {
+                var endpoint = self.pluginsRestEndpoints[i];
+                if (endpoint.endpoint === data.endpoint) {
+                    updated = true;
+                    endpoint = data;
+                    return self.logger.info('Updating ' + data.endpoint + ' REST Endpoint for plugin: ' + data.type + '/' + data.name);
+                }
+            }
+            if (!updated) {
+                self.logger.info('Adding ' + data.endpoint + ' REST Endpoint for plugin: ' + data.type + '/' + data.name);
+                self.pluginsRestEndpoints.push(data);
+            }
+        } else {
+            self.logger.info('Adding ' + data.endpoint + ' REST Endpoint for plugin: ' + data.type + '/' + data.name);
+            self.pluginsRestEndpoints.push(data);
+        }
+    } else {
+        self.logger.error('Not Adding plugin to REST Endpoints, missing parameters');
+    }
+}
+
+CoreCommandRouter.prototype.getPluginsRestEndpoints = function () {
+    var self=this;
+
+    return self.pluginsRestEndpoints
+}
+
+CoreCommandRouter.prototype.getPluginEnabled = function (category, pluginName) {
+    var self=this;
+
+    return this.pluginManager.isEnabled(category, pluginName);
+}
+
+CoreCommandRouter.prototype.getSystemVersion = function () {
+    var self=this;
+
+    return this.executeOnPlugin('system_controller', 'system', 'getSystemVersion', '');
+}
+
+CoreCommandRouter.prototype.getAdvancedSettingsStatus = function () {
+    var self=this;
+
+    return this.executeOnPlugin('system_controller', 'system', 'getAdvancedSettingsStatus', '');
+}
+
+CoreCommandRouter.prototype.getExperienceAdvancedSettings = function () {
+    var self=this;
+
+    return this.executeOnPlugin('system_controller', 'system', 'getExperienceAdvancedSettings', '');
+}
+
+CoreCommandRouter.prototype.broadcastUiSettings = function () {
+    var self=this;
+    var returnedData = self.executeOnPlugin('miscellanea', 'appearance', 'getUiSettings', '');
+
+    if (returnedData != undefined) {
+        returnedData.then(function (data) {
+            self.broadcastMessage('pushUiSettings', data);
+        });
+    }
+}
+
+// ============================  AUDIO OUTPUTS =================================
+
+
+CoreCommandRouter.prototype.addAudioOutput = function (data) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.addAudioOutput === "function") {
+		return audioOutputPlugin.addAudioOutput(data);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+
+};
+
+CoreCommandRouter.prototype.updateAudioOutput = function (data) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.updateAudioOutput === "function") {
+		return audioOutputPlugin.updateAudioOutput(data);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};
+
+CoreCommandRouter.prototype.removeAudioOutput = function (id) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.removeAudioOutput === "function") {
+		return audioOutputPlugin.removeAudioOutput(id);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};
+
+CoreCommandRouter.prototype.getAudioOutputs = function () {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.getAudioOutputs === "function") {
+		return audioOutputPlugin.getAudioOutputs();
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};
+
+CoreCommandRouter.prototype.enableAudioOutput = function (data) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.enableAudioOutput === "function") {
+		return audioOutputPlugin.enableAudioOutput(data);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};
+
+CoreCommandRouter.prototype.disableAudioOutput = function (id) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.disableAudioOutput === "function") {
+		return audioOutputPlugin.disableAudioOutput(id);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};
+
+CoreCommandRouter.prototype.setAudioOutputVolume = function (data) {
+	var self = this;
+
+	var audioOutputPlugin = this.pluginManager.getPlugin('audio_interface', 'outputs');
+	if (audioOutputPlugin != undefined && typeof audioOutputPlugin.setAudioOutputVolume === "function") {
+		return audioOutputPlugin.setAudioOutputVolume(data);
+	} else {
+		this.logger.error('WARNING: No Audio Output plugin found');
+	}
+};

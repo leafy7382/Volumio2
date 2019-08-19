@@ -2,8 +2,8 @@ var fs = require('fs-extra');
 var exec = require('child_process').exec;
 var execSync = require('child_process').execSync;
 var inquirer = require('inquirer');
-var websocket = require('socket.io-client')
-var socket = websocket.connect('http://127.0.0.1:3000', {reconnect: true})
+var websocket = require('socket.io-client');
+var os = require('os');
 
 // ============================== CREATE PLUGIN ===============================
 
@@ -29,13 +29,12 @@ function init() {
             console.log("cloning repo:\ngit clone https://github.com/" + name +
                 "/volumio-plugins.git");
             try {
-                execSync("/usr/bin/git clone https://github.com/" + name +
+                execSync("/usr/bin/git clone --depth 5 --no-single-branch https://github.com/" + name +
                     "/volumio-plugins.git /home/volumio/volumio-plugins");
                 console.log("Done, please run command again");
-                process.exit(1);
             }catch(e){
                 console.log("Unable to find repo, are you sure you forked it?")
-                process.exit(1);
+                process.exitCode = 1;
             }
         });
     }
@@ -44,20 +43,23 @@ function init() {
         exec("git config --get remote.origin.url", function (error, stdout, stderr) {
             if (error) {
                 console.error('exec error: ${error}');
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
             var url = stdout;
             if (url == "https://github.com/volumio/volumio-plugins.git\n") {
                 exec("git config user.name", function (error, stdout, stderr) {
                     if (error) {
                         console.error('exec error: ${error}');
-                        process.exit(1);
+                        process.exitCode = 1;
+                        return;
                     }
                     var user = stdout;
                     if (user != 'volumio\n'){
                         console.log("Error, your repo is the original one, please " +
                             "fork it as suggested in the documentation!");
-                        process.exit(1);
+                        process.exitCode = 1;
+                        return;
                     }
                     else{
                         ask_category();
@@ -316,7 +318,13 @@ function finalizing(path, package) {
         package.name);
 
     console.log("Installing dependencies locally");
+    if (fs.existsSync(process.cwd + '/package-lock.json')) {
+        execSync("/bin/rm package-lock.json");
+    }
     execSync("/usr/local/bin/npm install");
+    if (fs.existsSync(process.cwd + '/package-lock.json')) {
+        execSync("/bin/rm package-lock.json");
+    }
 
     console.log("\nCongratulation, your plugin has been succesfully created!\n" +
         "You can find it in: " + path + "\n");
@@ -351,13 +359,20 @@ function zip(){
         if(! fs.existsSync("node_modules")) {
             console.log("No modules found, running \"npm install\"");
             try{
+                if (fs.existsSync(process.cwd + '/package-lock.json')) {
+                    execSync("/bin/rm package-lock.json");
+                }
                 execSync("/usr/local/bin/npm install");
+                if (fs.existsSync(process.cwd + '/package-lock.json')) {
+                    execSync("/bin/rm package-lock.json");
+                }
             }
             catch (e){
                 console.log("Error installing node modules: " + e);
-                process.exit(1);
+                process.exitCode = 1;
+                return;
             }
-        }        
+        }
         var package = fs.readJsonSync("package.json");
         execSync("IFS=$'\\n'; /usr/bin/minizip -o -9 " + package.name +
             ".zip $(find -type f -not -name " + package.name + ".zip -printf '%P\\n')",
@@ -366,6 +381,7 @@ function zip(){
     }
     catch (e){
         console.log("Error compressing plugin: " + e);
+        process.exitCode = 1;
     }
 }
 
@@ -405,17 +421,25 @@ function publish() {
         inquirer.prompt(questions).then(function (answer) {
             package.version = answer.version;
             fs.writeJsonSync("package.json", package, {spaces:'\t'});
+            fs.writeFileSync(".gitignore", ".gitignore" + os.EOL + "node_modules" + os.EOL + "*.zip");
             try {
                 execSync("/usr/bin/git add *");
+            }
+            catch (e){
+                console.log("Nothing to add");
+            }
+
+            try {
                 execSync("/usr/bin/git commit -am \"updating plugin " +
                     package.name + " version " + package.version + "\"");
+
             }
             catch (e){
                 console.log("Nothing to commit");
             }
-            
+
             zip();
-            
+
             execSync("/bin/mv " + package.name + ".zip /tmp/");
             process.chdir("../../../");
             execSync("/usr/bin/git checkout gh-pages");
@@ -494,7 +518,7 @@ function update_plugins(package, arch) {
                 }
                 if(j == plugins.categories[i].plugins.length && !plugFound &&
                     plugins.categories[i].plugins[j-1].name != package.name){
-                    write_new_plugin(package, arch, plugins, j);
+                    write_new_plugin(package, arch, plugins, i);
                     catFound = true;
                 }
             }
@@ -536,7 +560,11 @@ function write_new_plugin(package, arch, plugins, index) {
     inquirer.prompt(question).then(function (answer) {
         var today = new Date();
         data.prettyName = package.volumio_info.prettyName;
-        data.icon = "fa-lightbulb-o";
+        if (package.icon != undefined) {
+            data.icon = package.icon;
+        } else {
+            data.icon = "fa-lightbulb-o";
+        }
         data.name = package.name;
         data.version = package.version;
         data.url = "http://volumio.github.io/volumio-plugins/" +
@@ -651,25 +679,26 @@ function commit(package, arch) {
 
 function install(){
     if(fs.existsSync("package.json")){
+        let socket = websocket.connect('http://127.0.0.1:3000', {reconnect: true});
         var package = fs.readJsonSync("package.json");
         zip();
         if(!fs.existsSync("/tmp/plugins")) {
             execSync("/bin/mkdir /tmp/plugins/")
         }
-        execSync("/bin/mv *.zip /tmp/plugins/" +package.name + ".zip");
+        execSync("/bin/mv *.zip /tmp/plugins/" + package.name + ".zip");
         socket.emit('installPlugin', {url: 'http://127.0.0.1:3000/plugin-serve/'
             + package.name + ".zip"})
         socket.on('installPluginStatus', function (data) {
             console.log("Progress: " + data.progress + "\nStatus :" + data.message)
             if(data.message == "Plugin Successfully Installed"){
                 console.log("Done!");
-                process.exit(1)
+                socket.close()
             }
         })
     }
     else {
         console.log("No package found")
-        process.exit(1)
+        process.exitCode = 1;
     }
 }
 
@@ -677,25 +706,26 @@ function install(){
 
 function update() {
     if(fs.existsSync("package.json")){
+        let socket = websocket.connect('http://127.0.0.1:3000', {reconnect: true});
         var package = fs.readJsonSync("package.json");
         zip();
         if(!fs.existsSync("/tmp/plugins")) {
             execSync("/bin/mkdir /tmp/plugins/")
         }
-        execSync("/bin/mv *.zip /tmp/plugins/" +package.name + ".zip");
+        execSync("/bin/mv *.zip /tmp/plugins/" + package.name + ".zip");
         socket.emit('updatePlugin', {url: 'http://127.0.0.1:3000/plugin-serve/'
             + package.name + ".zip", category: package.category, name: package.name})
         socket.on('installPluginStatus', function (data) {
             console.log("Progress: " + data.progress + "\nStatus :" + data.message)
             if(data.message == "Plugin Successfully Installed"){
                 console.log("Done!");
-                process.exit(1)
+                socket.close()
             }
         })
     }
     else {
         console.log("No package found")
-        process.exit(1)
+        process.exitCode = 1;
     }
 }
 
